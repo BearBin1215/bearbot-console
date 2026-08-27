@@ -28,7 +28,7 @@ export function reportRendererError(source: string, err: unknown, extraDetail?: 
       taskKey: '__system__',
       message: fullMessage,
       system: true,
-      time: dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss'),
+      time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
       ...(detail ? { detail } : {}),
     });
 

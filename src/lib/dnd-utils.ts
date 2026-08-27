@@ -1,4 +1,5 @@
 import type { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove } from '@dnd-kit/sortable';
 
 /**
  * 通用的拖拽排序处理函数
@@ -38,8 +39,5 @@ export function reorderById<T>(
     return null;
   }
 
-  const result = [...arr];
-  const [moved] = result.splice(oldIndex, 1);
-  result.splice(newIndex, 0, moved);
-  return result;
+  return arrayMove(arr, oldIndex, newIndex);
 }

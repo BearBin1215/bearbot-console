@@ -90,7 +90,7 @@ function sendSystemLog(level: LogLevel, message: string, detail?: string): void 
     message,
     system: true,
     eventId: randomUUID(),
-    time: dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss'),
+    time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
     ...(detail ? { detail } : {}),
   };
   appendLog(entry);
@@ -197,7 +197,7 @@ app.whenReady().then(() => {
       const entry = {
         ...payload,
         eventId: randomUUID(),
-        time: dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss'),
+        time: dayjs().format('YYYY-MM-DD HH:mm:ss'),
       };
       appendLog(entry);
       sendToRenderer('task:log', entry);
