@@ -64,7 +64,7 @@ export function createWindow(): void {
     minHeight: 540,
     useContentSize: true,
     title: app.getName(),
-    icon: path.join(process.env.VITE_PUBLIC, 'favicon.png'),
+    icon: path.join(process.env.VITE_PUBLIC, process.platform === 'win32' ? 'favicon.ico' : 'favicon.png'),
     thickFrame: true,
     // 隐藏默认标题栏，使用自定义组件覆盖
     titleBarStyle: 'hidden',
