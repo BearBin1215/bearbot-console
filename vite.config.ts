@@ -17,6 +17,18 @@ const buildDefines = {
   __APP_VERSION__: JSON.stringify(pkg.version),
 };
 
+/**
+ * electron 环境（main/preload）专用的路径别名
+ *
+ * vite-plugin-electron 侧为独立构建（configFile: false），不会继承根配置的 resolve.alias，
+ * 必须在各自的 rolldownOptions.resolve 中单独声明
+ */
+const electronResolve = {
+  alias: {
+    '@shared': path.join(import.meta.dirname, 'shared'),
+  },
+};
+
 export default defineConfig(({ command }) => {
   rmSync('dist-electron', { recursive: true, force: true });
 
@@ -55,6 +67,7 @@ export default defineConfig(({ command }) => {
               outDir: 'dist-electron/main',
               rolldownOptions: {
                 external,
+                resolve: electronResolve,
               },
             },
           },
@@ -69,6 +82,7 @@ export default defineConfig(({ command }) => {
               outDir: 'dist-electron/preload',
               rolldownOptions: {
                 external,
+                resolve: electronResolve,
               },
             },
           },

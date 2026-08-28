@@ -13,7 +13,7 @@ import type {
   TaskRunRecord,
   UserInfo,
 } from '@shared/types';
-import { createDefaultSettings } from '../../shared/settings';
+import { createDefaultSettings } from '@shared/settings';
 
 
 // #region 应用设置

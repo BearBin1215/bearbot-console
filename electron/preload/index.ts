@@ -9,7 +9,7 @@ import {
   type IpcInvokeChannel,
   type IpcInvokeResult,
   type IpcRendererApi,
-} from '../../shared/ipc';
+} from '@shared/ipc';
 
 /** 判断通道是否在调用白名单中 */
 function isInvokeChannel(channel: string): channel is IpcInvokeChannel {

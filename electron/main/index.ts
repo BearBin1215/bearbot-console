@@ -12,7 +12,7 @@ import {
   type IpcInvokeChannel,
   type IpcInvokeResult,
   type RendererErrorPayload,
-} from '../../shared/ipc';
+} from '@shared/ipc';
 import {
   getAllSettings,
   patchSettings,
