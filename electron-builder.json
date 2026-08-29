@@ -9,6 +9,11 @@
     "dist-electron",
     "dist"
   ],
+  "compression": "maximum",
+  "electronLanguages": [
+    "zh-CN",
+    "en-US"
+  ],
   "linux": {
     "target": ["AppImage", "deb"]
   },
