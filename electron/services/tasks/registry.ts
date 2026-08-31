@@ -12,6 +12,7 @@ import requiredDisambigHandler from '../../tasks/required-disambig';
 import halfWidthHandler from '../../tasks/half-width';
 import vnNavboxUpdater from '../../tasks/vn-navbox-updater';
 import vnEditStat from '../../tasks/vn-edit-stat';
+import vnCvUpdateTime from '../../tasks/vn-cv-update-time';
 import syncFeishuTableData from '../../tasks/sync-feishu-tabledata';
 import messUpdater from '../../tasks/mess-updater';
 
@@ -77,6 +78,11 @@ export const TASK_REGISTRY: Record<string, TaskEntry> = {
       },
     ],
     handler: vnEditStat,
+  },
+  'vn-cv-update-time': {
+    defaultName: '更新里界声优条目更新时间',
+    defaultDescription: '更新[[User:BearBin/VNData/里界声优条目更新时间]]',
+    handler: vnCvUpdateTime,
   },
   'sync-feishu-to-userpage': {
     defaultName: '同步飞书表格到用户页',

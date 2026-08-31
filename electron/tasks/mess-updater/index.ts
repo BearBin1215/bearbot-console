@@ -258,24 +258,14 @@ const messUpdater: TaskHandler = async ({ api, logger, signal }) => {
 
   /** 获取 [[Category:页顶提示模板]] 下的模板名列表（已去除 Template: 前缀） */
   const fetchTopTipTemplates = async (): Promise<string[]> => {
+    const members = await api.fetchCategoryMembers('Category:页顶提示模板', { cmprop: 'title' });
     const templates: string[] = [];
-    let cmcontinue: string | false = false;
-    do {
-      const response = await api.post({
-        action: 'query',
-        list: 'categorymembers',
-        cmlimit: 'max',
-        cmtitle: 'Category:页顶提示模板',
-        cmcontinue,
-      });
-      cmcontinue = response.continue?.cmcontinue || false;
-      for (const member of response.query.categorymembers as Array<{ title: string }>) {
-        const name = member.title.replace('Template:', '');
-        if (!EXCLUDED_TOP_TIPS.includes(name)) {
-          templates.push(name);
-        }
+    for (const member of members) {
+      const name = member.title.replace('Template:', '');
+      if (!EXCLUDED_TOP_TIPS.includes(name)) {
+        templates.push(name);
       }
-    } while (cmcontinue);
+    }
     logger.info(`获取到${templates.length}个页顶提示模板`);
     return templates;
   };
