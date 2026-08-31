@@ -84,6 +84,8 @@ bearbot-console/
 - 用户信息（用户组、权限）
 - 任务调度配置（`cron`、`enabled`、`overrides`，可持久化）
 
+mess-updator 任务使用 `node:sqlite`（`mess-updater.db`）缓存全站页面数据，供增量比对与本地检查。
+
 Cookie 由原生 session cookie store 管理，在多账号登录的情况下按账号存储。
 
 ## 代码规范
