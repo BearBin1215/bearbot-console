@@ -28,9 +28,11 @@
     "node": ">=24.15.0"
   },
   "dependencies": {
+    "croner": "^10.0.1",
     "dayjs": "^1.11.23",
     "electron-store": "^11.0.2",
-    "electron-window-state": "^5.0.3"
+    "electron-window-state": "^5.0.3",
+    "es-toolkit": "^1.51.0"
   },
   "devDependencies": {
     "@ant-design/icons": "^6.3.2",
@@ -47,10 +49,8 @@
     "@vitejs/plugin-react": "^6.1.0",
     "antd": "^6.6.1",
     "cron-chinese": "^1.2.3",
-    "croner": "^10.0.1",
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
-    "es-toolkit": "^1.51.0",
     "eslint": "^10.8.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
