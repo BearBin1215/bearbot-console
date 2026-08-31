@@ -245,6 +245,37 @@ export class MoegirlApi {
   }
 
   /**
+   * 获取指定分类的全部成员
+   *
+   * 自动使用 `cmcontinue` 完成分页。额外参数用于传入 `cmnamespace`、`cmtype`、`cmsort` 等
+   * `list=categorymembers` 查询参数；请求类型、分类标题、分页大小与续传参数由本方法统一控制。
+   *
+   * @param category 分类标题（含 Category: 前缀）
+   * @param extraParams 额外的 categorymembers 查询参数
+   * @returns 分类成员列表
+   */
+  async fetchCategoryMembers<T = TitleEntry>(
+    category: string,
+    extraParams?: Record<string, unknown>,
+  ): Promise<T[]> {
+    const members: T[] = [];
+    let cmcontinue: string | false = false;
+    do {
+      const response = await this.post({
+        ...extraParams,
+        action: 'query',
+        list: 'categorymembers',
+        cmtitle: category,
+        cmlimit: 'max',
+        cmcontinue,
+      });
+      cmcontinue = response.continue?.cmcontinue || false;
+      members.push(...response.query.categorymembers as T[]);
+    } while (cmcontinue);
+    return members;
+  }
+
+  /**
    * 获取全站页面标题列表
    * @param extraParams 额外的查询参数（如 `{ apfilterredir: 'nonredirects' }` 排除重定向）
    * @returns 页面标题集合（Set）

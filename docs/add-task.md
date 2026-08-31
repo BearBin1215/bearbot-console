@@ -10,6 +10,7 @@
     - [`getToken`](#gettoken)
     - [`getPageSource`](#getpagesource)
     - [`editPage`](#editpage)
+    - [`fetchCategoryMembers`](#fetchcategorymembers)
     - [`fetchAllPages`](#fetchallpages)
   - [`commonsApi` — 共享站 MoegirlApi 实例](#commonsapi--共享站-moegirlapi-实例)
   - [`logger` — 日志输出](#logger--日志输出)
@@ -166,6 +167,30 @@ await api.editPage('页面名', text, '编辑摘要', { timeout: 60000 });
 - 请求默认携带 `bot: true` 与 `tags: 'Bot'`
 - 保存过程自动输出日志，任务脚本中无需手动记录
 - MediaWiki 在编辑被拦截或权限不足时返回 `result: "Failure"` 而不通过 `error` 字段报错，`editPage` 已做校验，此类失败会抛出携带 result 的错误并由框架记录
+
+#### `fetchCategoryMembers`
+
+获取指定分类的全部成员，自动处理 `cmcontinue` 分页：
+
+```typescript
+const members = await api.fetchCategoryMembers('Category:分类名');
+for (const member of members) {
+  logger.info(member.title);
+}
+
+// 只获取模板和子分类，并同时返回成员类型
+const filteredMembers = await api.fetchCategoryMembers<{ title: string; type: string }>(
+  'Category:分类名',
+  {
+    cmnamespace: '10|14',
+    cmtype: 'page|subcat',
+    cmprop: 'title|type',
+  },
+);
+```
+
+第二个参数用于传入 `cmnamespace`、`cmtype`、`cmprop`、`cmsort` 等 `list=categorymembers` 参数。
+`action`、`list`、`cmtitle`、`cmlimit` 与 `cmcontinue` 由方法统一控制，传入同名参数不会覆盖内部值。
 
 #### `fetchAllPages`
 

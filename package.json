@@ -4,7 +4,7 @@
     "type": "git",
     "url": "git+https://github.com/BearBin1215/bearbot-console"
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "productName": "BearBot Console",
   "description": "MoegirlPedia bot console",

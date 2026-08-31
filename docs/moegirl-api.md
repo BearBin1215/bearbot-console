@@ -26,6 +26,7 @@
 | `api.post(params)` | POST 请求（任务中最常用） |
 | `api.postWithToken(tokenType, params)` | 先取 token 再 POST；自动处理 `badtoken` 刷新。编辑等写操作必须用此方法 |
 | `api.getToken(tokenType)` / `refreshToken(...)` | 取/刷新 token（带缓存） |
+| `api.fetchCategoryMembers(category, extraParams?)` | 获取分类的全部成员，自动处理 `cmcontinue` 分页 |
 
 ### 2.2 请求机制（`request`，`moegirl.ts:142`）
 
@@ -88,7 +89,7 @@ do {
 
 ### 6.1 单参数分页
 
-大多数查询只有一个分页参数，命名规则是 `<前缀>continue`（如 `allpages` → `apcontinue`、`categorymembers` → `gcmcontinue`）。从 `res.continue?.<前缀>continue` 读取，回传到下次请求，循环至无 `continue`。完整示例见第 5 节。
+大多数查询只有一个分页参数，命名规则是 `<前缀>continue`（如 `allpages` → `apcontinue`、`list=categorymembers` → `cmcontinue`、`generator=categorymembers` → `gcmcontinue`）。从 `res.continue?.<前缀>continue` 读取，回传到下次请求，循环至无 `continue`。完整示例见第 5 节。
 
 ### 6.2 多参数分页
 
