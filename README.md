@@ -65,9 +65,10 @@
 
 ## 使用
 
-本项目有两个分支：
+本项目有三个分支：
 - 主分支为干净分支，仅包含框架代码，可自行添加任务脚本并构建使用。
 - [bearbot 分支](https://github.com/BearBin1215/bearbot-console/tree/bearbot)为我[个人机器人](https://mzh.moegirl.org.cn/User:BearBot)分支，包含具体任务脚本，可供参考。
+- [gh-pages 分支](https://github.com/BearBin1215/bearbot-console/tree/gh-pages)为项目演示页分支，在[GitHub Page](https://BearBin1215.github.io/bearbot-console/)上模拟界面和运行效果。
 
 ### 添加机器人任务
 

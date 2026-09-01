@@ -55,6 +55,12 @@ bearbot-console/
 └── tsconfig.json / tsconfig.node.json
 ```
 
+## 分支
+
+- **main**：主分支，仅包含框架代码，任务仅示例。
+- **bearbot**：个人机器人分支，包含具体任务脚本，可供参考。
+- **gh-pages**：项目演示页分支，在 GitHub Page 上模拟界面和运行效果。
+
 ## 架构
 
 ### 进程模型
