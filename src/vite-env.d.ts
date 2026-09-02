@@ -4,6 +4,8 @@
 declare const __APP_NAME__: string;
 /** 应用版本号（由 vite define 注入） */
 declare const __APP_VERSION__: string;
+/** 是否为网页演示模式构建（桌面版为 false，网页版为 true） */
+declare const __WEB_DEMO__: boolean;
 
 interface Window {
   // 由 electron/preload/index.ts 暴露的窄 API（带通道白名单），而非完整 IpcRenderer

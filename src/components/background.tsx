@@ -2,6 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useOpacityDraftStore } from '@/stores/opacity-draft-store';
 
+/**
+ * 将背景图配置值转换为可渲染的图片地址
+ *
+ * 以 /、data: 或 http(s) 开头的地址（网页演示模式下的打包资源 URL）直接使用，
+ * 其余视为本地文件路径，走 Electron 自定义协议读取
+ */
+function toImageUrl(currentImage: string): string {
+  if (/^(data:|https?:|\/)/.test(currentImage)) {
+    return currentImage;
+  }
+  return `local-file://localhost/?path=${encodeURIComponent(currentImage.replace(/\\/g, '/'))}`;
+}
+
 /** 图层 */
 interface BgLayer {
   id: number;
@@ -58,10 +71,10 @@ export default function Background() {
     }
   }, [backgroundImages.length, currentIndex]);
 
-  const currentImage = backgroundImages.length > 0 ? (backgroundImages[currentIndex] ?? '') : '';
-  const imageUrl = currentImage
-    ? `local-file://localhost/?path=${encodeURIComponent(currentImage.replace(/\\/g, '/'))}`
+  const currentImage = backgroundImages.length > 0
+    ? (backgroundImages[currentIndex] ?? '')
     : '';
+  const imageUrl = currentImage ? toImageUrl(currentImage) : '';
 
   // 交叉淡入淡出
   const [layers, setLayers] = useState<BgLayer[]>([]);

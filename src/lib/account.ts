@@ -3,9 +3,20 @@
  */
 import type { Account } from '@shared/types';
 
-/** 萌娘百科账号头像 URL（无 userId 时返回 undefined，由 Avatar 回退到图标） */
+/**
+ * 萌娘百科账号头像 URL（无 userId 时返回 undefined，由 Avatar 回退到图标）
+ *
+ * 以 /、data: 或 http(s) 开头的 userId（网页演示模式下的打包资源 URL）直接使用；
+ * 真实账号的 userId 为数字字符串，不会命中该分支
+ */
 export function avatarUrl(userId: string | null): string | undefined {
-  return userId ? `https://storage.moegirl.org.cn/moegirl/avatars/${userId}/latest.png` : undefined;
+  if (!userId) {
+    return undefined;
+  }
+  if (/^(data:|https?:|\/)/.test(userId)) {
+    return userId;
+  }
+  return `https://storage.moegirl.org.cn/moegirl/avatars/${userId}/latest.png`;
 }
 
 /**

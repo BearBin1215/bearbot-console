@@ -39,6 +39,8 @@ export default defineConfig(({ command }) => {
   return {
     define: {
       ...buildDefines,
+      // 桌面版非网页演示模式；网页演示版由 vite.config.web.ts 定义为 true
+      __WEB_DEMO__: 'false',
       // react-draggable 内部读取 process.env.DRAGGABLE_DEBUG，浏览器环境无 process，替换为 false 避免运行时报错
       'process.env.DRAGGABLE_DEBUG': 'false',
     },

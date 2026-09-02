@@ -43,6 +43,9 @@ export default function TitleBar() {
   const [topBorderColor, setTopBorderColor] = useState<string>();
 
   useEffect(() => {
+    if (__WEB_DEMO__) {
+      return;
+    }
     let cancelled = false;
     let cleanup: (() => void) | undefined;
     detectWindows10().then((isWin10) => {
@@ -65,6 +68,10 @@ export default function TitleBar() {
         window.removeEventListener('blur', refresh);
         window.removeEventListener('resize', refresh);
       };
+    }).catch(() => {
+      if (!cancelled) {
+        setTopBorderColor(undefined);
+      }
     });
     return () => {
       cancelled = true;
