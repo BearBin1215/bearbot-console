@@ -52,6 +52,7 @@
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "eslint": "^10.9.1",
+    "jiti": "^2.7.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-draggable": "^4.7.1",
