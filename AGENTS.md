@@ -8,7 +8,7 @@
 
 ## 技术栈
 
-- **运行时**: Electron 43 + Node.js 24
+- **运行时**: Electron 44 + Node.js 24
 - **前端**: React 19 + TypeScript 6
 - **UI 库**: Ant Design 6 + TailwindCSS 4
 - **状态管理**: Zustand
@@ -54,6 +54,12 @@ bearbot-console/
 ├── vite.config.ts
 └── tsconfig.json / tsconfig.node.json
 ```
+
+## 分支
+
+- **main**：主分支，仅包含框架代码，任务仅示例。
+- **bearbot**：个人机器人分支，包含具体任务脚本，可供参考。
+- **gh-pages**：项目演示页分支，在 GitHub Page 上模拟界面和运行效果。
 
 ## 架构
 
@@ -104,3 +110,6 @@ Cookie 由原生 session cookie store 管理，在多账号登录的情况下按
 - 未实现的需求无需处理，仅审查已实现代码的质量
 - 硬编码但未关联实际业务的数据为MOCK占位数据，功能尚未实现，无需处理
 - 实际生产环境中，全站条目总量约为220000，涉及遍历全站标题等功能时以250000为标准估算性能压力
+- 依赖分类规则（vite 会打包渲染端代码，electron-builder 会将 dependencies 的 node_modules 打入 asar）：
+  - 仅渲染进程或构建期使用的库放 `devDependencies`
+  - 主进程运行时 import 的库放 `dependencies`（main 构建将其 external，遗漏会导致安装包内缺模块、启动报错）

@@ -1,4 +1,5 @@
 import dayjs from 'dayjs';
+import { countBy, groupBy, mapValues } from 'es-toolkit';
 import type { TaskRunRecord, TaskParamField, TaskParamValues } from '@shared/types';
 
 /** 任务执行统计的时间段选项 */
@@ -30,15 +31,27 @@ interface TaskRunStatus {
   label: string;
 }
 
+/** 任务执行状态（aborted 优先计中止，否则 success 计成功，其余计失败） */
+type TaskRunState = 'aborted' | 'success' | 'failed';
+
+/** 执行记录的状态归类（统计聚合与标签展示共用此口径） */
+function statusOf(record: TaskRunRecord): TaskRunState {
+  if (record.aborted) {
+    return 'aborted';
+  }
+  return record.success ? 'success' : 'failed';
+}
+
+/** 各状态的标签展示配置 */
+const RUN_STATUS_META: Record<TaskRunState, TaskRunStatus> = {
+  aborted: { color: 'default', label: '已停止' },
+  success: { color: 'green', label: '成功' },
+  failed: { color: 'red', label: '失败' },
+};
+
 /** 根据执行记录返回状态标签的颜色与文本（已停止 / 成功 / 失败） */
 export function getRunStatus(record: TaskRunRecord): TaskRunStatus {
-  if (record.aborted) {
-    return { color: 'default', label: '已停止' };
-  }
-  if (record.success) {
-    return { color: 'green', label: '成功' };
-  }
-  return { color: 'red', label: '失败' };
+  return RUN_STATUS_META[statusOf(record)];
 }
 
 /**
@@ -95,7 +108,7 @@ export function getStatsRangeCutoff(range: StatsRange): number {
 /**
  * 按时间段过滤执行记录并按 taskKey 聚合统计。
  *
- * 归类规则与 {@link getRunStatus} 一致：`aborted` 优先计中止，否则 `success` 计成功，其余计失败。
+ * 归类规则由 {@link statusOf} 提供，与状态标签展示同口径。
  * 已从任务列表中删除的任务（不在 taskNameMap 中）不计入统计。
  * 返回结果不保证顺序，由展示层自行排序。
  *
@@ -109,32 +122,22 @@ export function aggregateTaskRunStats(
   taskNameMap: Map<string, string>,
 ): TaskStatItem[] {
   const cutoff = getStatsRangeCutoff(range);
-  /** taskKey -> 累计分项计数 */
-  const buckets = new Map<string, { success: number; failed: number; aborted: number }>();
 
-  for (const r of records) {
-    // 跳过已删除任务与超出时间段的记录
-    if (!taskNameMap.has(r.taskKey) || r.endTime < cutoff) {
-      continue;
-    }
-    let bucket = buckets.get(r.taskKey);
-    if (!bucket) {
-      bucket = { success: 0, failed: 0, aborted: 0 };
-      buckets.set(r.taskKey, bucket);
-    }
-    if (r.aborted) {
-      bucket.aborted++;
-    } else if (r.success) {
-      bucket.success++;
-    } else {
-      bucket.failed++;
-    }
-  }
+  /** taskKey -> 各状态次数 */
+  const countsByTask = mapValues(
+    groupBy(
+      records.filter((r) => taskNameMap.has(r.taskKey) && r.endTime >= cutoff),
+      (r) => r.taskKey,
+    ),
+    (runs) => {
+      const { aborted = 0, success = 0, failed = 0 } = countBy(runs, statusOf);
+      return { aborted, success, failed };
+    },
+  );
 
-  const items: TaskStatItem[] = [];
-  for (const [taskKey, counts] of buckets) {
+  return Object.entries(countsByTask).map(([taskKey, counts]) => {
     const total = counts.success + counts.failed + counts.aborted;
-    items.push({
+    return {
       taskKey,
       name: taskNameMap.get(taskKey)!,
       success: counts.success,
@@ -142,8 +145,6 @@ export function aggregateTaskRunStats(
       aborted: counts.aborted,
       total,
       successRate: counts.success / total,
-    });
-  }
-
-  return items;
+    };
+  });
 }
