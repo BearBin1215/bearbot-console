@@ -4,13 +4,20 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { electronSimple } from 'vite-plugin-electron/multi-env';
-import { notBundle } from 'vite-plugin-electron/plugin';
 import checker from 'vite-plugin-checker';
 import pkg from './package.json' with { type: 'json' };
 
-const external = Object.keys(
+/**
+ * 主进程运行时依赖（dependencies）的 external 匹配
+ *
+ * 依赖包及其子路径（如 zod/mini）均保持 external，运行时由 electron-builder 打入 asar 的 node_modules 提供。
+ * rolldown 的 external 不支持函数形式（binding 仅接受字符串/RegExp），且字符串数组仅精确匹配裸包名无法覆盖子路径，故用 RegExp。
+ * npm 包名不含正则特殊字符（`-`/`_`/`.`/`@`/`/`），`.` 需转义。
+ */
+const externalDeps = Object.keys(
   'dependencies' in pkg ? (pkg.dependencies as Record<string, string>) : {},
 );
+const external = externalDeps.map((name) => new RegExp(`^${name.replaceAll('.', '\\.')}(?:/.+)?$`));
 
 const buildDefines = {
   __APP_NAME__: JSON.stringify(pkg.productName),
@@ -60,7 +67,6 @@ export default defineConfig(({ command }) => {
       electronSimple({
         main: {
           input: 'electron/main/index.ts',
-          plugins: [notBundle()],
           options: {
             define: buildDefines,
             build: {
@@ -76,14 +82,14 @@ export default defineConfig(({ command }) => {
         },
         preload: {
           input: 'electron/preload/index.ts',
-          plugins: [notBundle()],
+          bundleDeps: true,
           options: {
             build: {
               sourcemap: sourcemap ? 'inline' : undefined,
               minify: isBuild,
               outDir: 'dist-electron/preload',
               rolldownOptions: {
-                external,
+                external: ['electron'],
                 resolve: electronResolve,
               },
             },

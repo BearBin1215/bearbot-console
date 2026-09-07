@@ -5,6 +5,7 @@
  * 渲染进程通过 IPC 调用本模块完成数据存取，不直接操作 electron-store 实例。
  */
 import Store from 'electron-store';
+import { z } from 'zod';
 import type {
   AccountRecord,
   SettingsData,
@@ -21,26 +22,26 @@ import { createDefaultSettings } from '@shared/settings';
 /** 应用设置默认值 */
 const SETTINGS_DEFAULTS: SettingsData = createDefaultSettings(__APP_VERSION__);
 
-/** 设置校验 */
-const SETTINGS_VALIDATORS: Record<keyof SettingsData, (v: unknown) => boolean> = {
-  uiFont: (v) => typeof v === 'string',
-  codeFont: (v) => typeof v === 'string',
-  backgroundOpacity: (v) => typeof v === 'number' && v >= 0 && v <= 100,
-  backgroundInterval: (v) => typeof v === 'number' && v >= 0,
-  backgroundMode: (v) => v === 'sequential' || v === 'random',
-  backgroundFadeDuration: (v) => typeof v === 'number' && v >= 0,
+/** 应用设置逐字段校验 schema（patchSettings 逐字段校验，未知字段视为非法；输出对齐检查见 patchSettings） */
+const settingsDataSchema = z.object({
+  uiFont: z.string(),
+  codeFont: z.string(),
+  backgroundOpacity: z.number().min(0).max(100),
+  backgroundInterval: z.number().min(0),
+  backgroundMode: z.enum(['sequential', 'random']),
+  backgroundFadeDuration: z.number().min(0),
 
-  moegirlDomain: (v) => v === 'mzh.moegirl.org.cn' || v === 'zh.moegirl.org.cn',
-  userAgent: (v) => typeof v === 'string',
-  retryCount: (v) => typeof v === 'number' && v >= 0 && Number.isInteger(v),
-  retryInterval: (v) => typeof v === 'number' && v >= 0,
-  requestTimeout: (v) => typeof v === 'number' && v > 0,
-  minRequestInterval: (v) => typeof v === 'number' && v >= 0,
-  backgroundImages: (v) => Array.isArray(v),
+  moegirlDomain: z.enum(['mzh.moegirl.org.cn', 'zh.moegirl.org.cn']),
+  userAgent: z.string(),
+  retryCount: z.number().int().min(0),
+  retryInterval: z.number().min(0),
+  requestTimeout: z.number().positive(),
+  minRequestInterval: z.number().min(0),
+  backgroundImages: z.array(z.string()),
 
-  closeBehavior: (v) => v === 'minimize' || v === 'exit',
-  notifyOnTaskComplete: (v) => typeof v === 'boolean',
-};
+  closeBehavior: z.enum(['minimize', 'exit']),
+  notifyOnTaskComplete: z.boolean(),
+});
 
 const settingsStore = new Store<SettingsData>({
   name: 'settings',
@@ -58,13 +59,15 @@ export function getStorePath(): string {
 }
 
 /**
- * 合并写入部分设置，仅写入通过 {@link SETTINGS_VALIDATORS} 校验的已知字段，未知字段与校验失败的字段忽略并返回错误
+ * 合并写入部分设置，仅写入通过 {@link settingsDataSchema} 校验的已知字段，未知字段与校验失败的字段忽略并返回错误
  * @returns 被忽略的字段键名列表，供 settings:patch 记录错误输出日志
  */
 export function patchSettings(data: Partial<SettingsData>): string[] {
   const rejected: string[] = [];
+  // 注解同时是对齐检查：schema 漏字段或字段输出类型与 SettingsData 不符时编译失败
+  const fieldSchemas: { [K in keyof SettingsData]: z.ZodType<SettingsData[K]> } = settingsDataSchema.shape;
   for (const [key, value] of Object.entries(data)) {
-    if (key in SETTINGS_VALIDATORS && SETTINGS_VALIDATORS[key as keyof SettingsData](value)) {
+    if (fieldSchemas[key as keyof SettingsData]?.safeParse(value).success) {
       settingsStore.set(key, value);
     } else {
       rejected.push(key);
