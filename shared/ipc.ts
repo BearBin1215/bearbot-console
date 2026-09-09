@@ -53,6 +53,8 @@ export const IPC_INVOKE_MAP = {
   'accounts:add': contract<[{ username: string; password: string }], Account>(),
   'accounts:remove': contract<[string], void>(),
   'accounts:set-default': contract<[string], void>(),
+
+  'webhook:regenerate-token': contract<[], string>(),
 } satisfies Record<string, { args: readonly unknown[]; result: unknown }>;
 
 /** 渲染进程调用主进程的通道契约类型 */
@@ -150,6 +152,8 @@ const INVOKE_ARGS: Record<IpcInvokeChannel, z.ZodType> = {
   'accounts:add': z.tuple([z.object({ username: z.string(), password: z.string() })]),
   'accounts:remove': z.tuple([z.string()]),
   'accounts:set-default': z.tuple([z.string()]),
+
+  'webhook:regenerate-token': z.tuple([]),
 };
 
 /** 校验 IPC 调用参数；非法参数在进入主进程业务处理前直接拒绝 */

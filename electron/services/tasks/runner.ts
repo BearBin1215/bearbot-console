@@ -136,6 +136,7 @@ export function getRunningTasks(): string[] {
 async function executeTask(
   taskKey: string,
   callbacks: TaskRunCallbacks,
+  paramOverrides?: TaskParamValues,
 ): Promise<TaskRunResult> {
   const { sendLog, sendStatus, sendRunRecord } = callbacks;
 
@@ -182,7 +183,8 @@ async function executeTask(
       error: (message, detail) => sendLog({ level: 'ERROR', taskKey, message, detail }),
     },
     user: createTaskUser(api, loginStatus.username, loginStatus.userId),
-    params: resolveParams(entry.params, config?.params),
+    // 合并优先级：webhook 请求覆盖值 > 用户保存配置 > 注册表默认值（由 resolveParams 统一回退）
+    params: resolveParams(entry.params, { ...config?.params, ...paramOverrides }),
     signal: controller.signal,
     sleep: createAbortableSleep(controller.signal),
   };
@@ -251,10 +253,12 @@ async function executeTask(
  *
  * @param taskKey 任务唯一标识
  * @param callbacks 推送回调集合（日志、状态、执行记录）
+ * @param paramOverrides 参数覆盖值（如 Webhook 请求体携带的 params，优先级高于已保存配置）
  */
 export async function runTask(
   taskKey: string,
   callbacks: TaskRunCallbacks,
+  paramOverrides?: TaskParamValues,
 ): Promise<TaskRunResult> {
   const { sendLog } = callbacks;
 
@@ -266,7 +270,7 @@ export async function runTask(
   }
   taskLocks.add(taskKey);
   try {
-    return await executeTask(taskKey, callbacks);
+    return await executeTask(taskKey, callbacks, paramOverrides);
   } finally {
     // 账号检查、上下文创建或任务执行任一阶段抛错时都必须释放锁
     taskLocks.delete(taskKey);

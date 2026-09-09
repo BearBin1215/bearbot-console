@@ -71,6 +71,8 @@ interface TaskStore {
   updateTaskOverrides: (taskKey: string, overrides: { name?: string; description?: string }) => void;
   /** 更新任务绑定的执行账号 */
   updateTaskAccount: (taskKey: string, accountId: string | undefined) => void;
+  /** 更新任务的 Webhook 触发开关 */
+  updateTaskWebhook: (taskKey: string, webhookEnabled: boolean) => void;
   /** 更新任务参数值（与注册表 params 字段对应） */
   updateTaskParams: (taskKey: string, params: TaskParamValues) => void;
   /** 重新排序任务 */
@@ -172,6 +174,10 @@ export const useTaskStore = create<TaskStore>((set, get) => {
 
     updateTaskAccount: (taskKey, accountId) => {
       void patchConfig(taskKey, (existing) => ({ ...existing, accountId }));
+    },
+
+    updateTaskWebhook: (taskKey, webhookEnabled) => {
+      void patchConfig(taskKey, (existing) => ({ ...existing, webhookEnabled }));
     },
 
     updateTaskParams: (taskKey, params) => {
