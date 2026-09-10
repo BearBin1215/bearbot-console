@@ -15,6 +15,9 @@ export type MoegirlDomain = 'mzh.moegirl.org.cn' | 'zh.moegirl.org.cn';
 /** 背景轮播模式 */
 export type BackgroundMode = 'sequential' | 'random';
 
+/** Webhook 服务监听地址 */
+export type WebhookHost = '127.0.0.1' | '0.0.0.0';
+
 /** 应用设置数据（持久化存储形状，主进程 electron-store 与渲染进程 zustand 共用） */
 export interface SettingsData {
   /** 界面字体（CSS font-family 值，留空使用默认 sans-serif） */
@@ -25,6 +28,14 @@ export interface SettingsData {
   closeBehavior: CloseBehavior;
   /** 任务执行完成（成功/失败）后是否发送系统桌面通知（手动停止不通知） */
   notifyOnTaskComplete: boolean;
+  /** 是否启用 Webhook 触发服务（HTTP 服务，收到带鉴权的请求时触发指定任务） */
+  webhookEnabled: boolean;
+  /** Webhook 服务监听地址：127.0.0.1 仅本机（配合 frp 等转发）/ 0.0.0.0 局域网可达 */
+  webhookHost: WebhookHost;
+  /** Webhook 服务监听端口（1-65535） */
+  webhookPort: number;
+  /** Webhook 请求鉴权 Bearer Token（为空时主进程启动服务前会自动生成） */
+  webhookToken: string;
   /** 萌娘百科请求域名 */
   moegirlDomain: MoegirlDomain;
   /** 萌娘百科 API 请求的 User-Agent */
@@ -164,6 +175,8 @@ export interface TaskConfig {
   enabled: boolean;
   /** 执行该任务的账号 id（未设置时回退到默认账号） */
   accountId?: string;
+  /** 是否允许通过 Webhook 触发（未设置视为 false；与 cron 调度的 enabled 互不影响，语义类似手动执行） */
+  webhookEnabled?: boolean;
   /** 用户覆盖的显示设置 */
   overrides?: TaskOverrides;
   /** 用户填写的任务参数值（与注册表 params 字段对应，未填项由 runner 回退默认值） */

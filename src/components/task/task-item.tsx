@@ -40,6 +40,7 @@ export default function TaskItem({ task }: { task: TaskInfo }) {
   const updateTaskCron = useTaskStore((s) => s.updateTaskCron);
   const updateTaskOverrides = useTaskStore((s) => s.updateTaskOverrides);
   const updateTaskAccount = useTaskStore((s) => s.updateTaskAccount);
+  const updateTaskWebhook = useTaskStore((s) => s.updateTaskWebhook);
   const updateTaskParams = useTaskStore((s) => s.updateTaskParams);
   const accounts = useAccountStore((s) => s.accounts);
   const records = useTaskRunStore((s) => s.records);
@@ -190,6 +191,7 @@ export default function TaskItem({ task }: { task: TaskInfo }) {
         description={task.description}
         cron={task.cron}
         accountId={task.accountId}
+        webhookEnabled={task.webhookEnabled}
         accounts={accounts}
         defaultName={task.defaultName}
         defaultDescription={task.defaultDescription}
@@ -199,6 +201,7 @@ export default function TaskItem({ task }: { task: TaskInfo }) {
           updateTaskCron(task.taskKey, data.cron);
           updateTaskOverrides(task.taskKey, { name: data.name, description: data.description });
           updateTaskAccount(task.taskKey, data.accountId);
+          updateTaskWebhook(task.taskKey, data.webhookEnabled);
           if (data.params !== undefined) {
             updateTaskParams(task.taskKey, data.params);
           }

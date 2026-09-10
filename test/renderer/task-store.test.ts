@@ -79,6 +79,17 @@ describe('buildTaskList', () => {
     expect(result[0].accountId).toBe('acc-1');
   });
 
+  it('webhookEnabled 从 config 透传（含 undefined，防 UI 读值丢失后静默覆盖回 false）', () => {
+    const defs = [makeDef('a'), makeDef('b')];
+    const configs = {
+      a: makeConfig({ webhookEnabled: true }),
+      b: makeConfig({}),
+    };
+    const result = buildTaskList(defs, configs);
+    expect(result[0].webhookEnabled).toBe(true);
+    expect(result[1].webhookEnabled).toBeUndefined();
+  });
+
   it('paramValues 从 config.params 透传', () => {
     const defs = [makeDef('a')];
     const configs = { a: makeConfig({ params: { foo: 'bar', count: 10 } }) };
