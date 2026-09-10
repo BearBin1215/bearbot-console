@@ -8,6 +8,8 @@
  *   不读写 localStorage，不产生任何本地持久化
  * - 任务执行通过定时器生成模拟日志流，按真实事件链路推送 task:log /
  *   task:status / task:run-record，支持多任务并行与手动停止
+ * - Webhook 服务仅维护内存态监听目标，开关/地址/端口变化时推送与主进程
+ *   webhook-server 一致的生命周期系统日志，不真正监听端口
  * - 不会产生任何真实网络请求
  */
 import dayjs from 'dayjs';
@@ -61,6 +63,9 @@ let logs: TaskLogEvent[] = createMockLogs();
 
 /** 内存态：任务执行记录（刷新后重建演示历史） */
 let runRecords: TaskRunRecord[] = createMockRunRecords();
+
+/** 内存态：Webhook 服务当前监听目标（演示模式不真正监听端口，仅用于生成与主进程一致的生命周期日志） */
+let webhookRunning: { host: string; port: number } | null = null;
 
 /** 运行中的模拟任务（taskKey -> 运行状态） */
 const runningTasks = new Map<string, { stopped: boolean; startTime: number }>();
@@ -184,6 +189,40 @@ function stopMockRun(taskKey: string): void {
   });
 }
 
+/** 生成随机 Webhook Token（24 字节熵，base64url 编码，与主进程 generateToken 保持一致） */
+function generateWebhookToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * 模拟 Webhook 服务按设置增量调整（对齐主进程 webhookServer.applySettings 语义）
+ *
+ * 关闭时停止运行中的服务（输出停止日志）；开启时目标变化则先停旧再启新（各输出一条日志），
+ * 目标未变化时跳过。演示模式不真正监听端口，仅维护状态并推送系统日志。
+ *
+ * @param enabled Webhook 服务开关
+ * @param host 监听地址
+ * @param port 监听端口
+ */
+function applyWebhookSettings(enabled: boolean, host: string, port: number): void {
+  if (!enabled) {
+    if (webhookRunning) {
+      appendLog('__system__', 'INFO', `Webhook 服务已停止（${webhookRunning.host}:${webhookRunning.port}）`, true);
+      webhookRunning = null;
+    }
+    return;
+  }
+  if (webhookRunning?.host === host && webhookRunning?.port === port) {
+    return;
+  }
+  if (webhookRunning) {
+    appendLog('__system__', 'INFO', `Webhook 服务已停止（${webhookRunning.host}:${webhookRunning.port}）`, true);
+  }
+  webhookRunning = { host, port };
+  appendLog('__system__', 'INFO', `Webhook 服务已启动：http://${host}:${port}`, true);
+}
+
 /** 创建演示账号（以输入的用户名登录成功） */
 function createAccount(username: string): Account {
   return {
@@ -204,6 +243,10 @@ const invokeHandlers = {
   // 设置仅当前会话生效，刷新后重置为演示默认值
   'settings:patch': (data: Partial<SettingsData>) => {
     settings = { ...settings, ...data };
+    // Webhook 开关/地址/端口变化时模拟服务增量重启，生命周期日志与主进程 webhook-server 一致
+    if ('webhookEnabled' in data || 'webhookHost' in data || 'webhookPort' in data) {
+      applyWebhookSettings(settings.webhookEnabled, settings.webhookHost, settings.webhookPort);
+    }
   },
   'settings:open-dir': () => '（网页演示模式：本地存储目录不可用）',
   'settings:select-image': () => null,
@@ -259,6 +302,13 @@ const invokeHandlers = {
       accounts = next;
     }
   },
+
+  // 演示模式不启动真实 HTTP 服务，仅生成 Token 并同步内存设置（刷新后重置为空）
+  'webhook:regenerate-token': () => {
+    const token = generateWebhookToken();
+    settings = { ...settings, webhookToken: token };
+    return token;
+  },
 } as const satisfies {
   [C in IpcInvokeChannel]: (...args: IpcInvokeArgs<C>) => IpcInvokeResult<C> | Promise<IpcInvokeResult<C>>;
 };
@@ -283,11 +333,13 @@ export function installIpcMock(): void {
     },
     invoke: async <C extends IpcInvokeChannel>(channel: C, ...args: IpcInvokeArgs<C>) => {
       const handler = invokeHandlers[channel] as (...handlerArgs: unknown[]) => IpcInvokeResult<C>;
+      // 处理器同步执行，保证并发调用的处理顺序与真实 IPC 的消息派发顺序一致（仅响应附带随机往返延迟）；
       // 预览必须在原始点击调用栈内打开窗口，否则浏览器会拦截异步弹窗。
+      const result = handler(...args);
       if (channel !== 'settings:preview-image') {
         await delay(randomInt(100, 300));
       }
-      return handler(...args);
+      return result;
     },
   };
 
