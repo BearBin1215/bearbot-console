@@ -30,6 +30,14 @@ const webhookBodySchema = z.object({
   wait: z.boolean().optional(),
 });
 
+/** Webhook 服务监听配置（地址 + 端口）；开关关闭时不存在 */
+interface WebhookTarget {
+  /** 监听地址 */
+  host: string;
+  /** 监听端口 */
+  port: number;
+}
+
 /** 生成随机 Webhook Token（24 字节熵，base64url 编码） */
 function generateToken(): string {
   return randomBytes(24).toString('base64url');
@@ -42,8 +50,11 @@ function tokenEquals(actual: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** 请求体大小上限（1MB）：请求体仅含 params/wait 两个小字段，超出即异常请求 */
+/** 请求体大小上限（1MB）：请求体仅含 params/wait 两个小字段，正常不会超出 */
 const WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
+
+/** 启动失败后的重试冷却时长：相同配置在冷却期内不再重试，避免端口占用时每次设置保存都重复启动并刷错误日志 */
+const START_RETRY_COOLDOWN_MS = 5000;
 
 /**
  * Webhook 服务管理器
@@ -52,11 +63,10 @@ const WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
  * 天然复用防重入锁、取消信号、日志推送与执行记录。
  */
 class WebhookServer {
-  /** 当前运行中的 HTTP 服务实例 */
-  private server: ServerType | null = null;
-  /** 已成功应用的服务配置（地址 + 端口），用于判断设置变化是否需要重启 */
-  private appliedHost: string | null = null;
-  private appliedPort: number | null = null;
+  /** 当前运行中的 HTTP 服务实例与其监听地址；未运行时为 null */
+  private running: { server: ServerType; target: WebhookTarget } | null = null;
+  /** 上次启动失败的配置与时间，冷却期内相同配置不再重试 */
+  private lastFailed: { target: WebhookTarget; at: number } | null = null;
   /** 在途的 applySettings/stop 操作链（promise 链串行化，消除并发调用导致的重复监听泄漏） */
   private pending: Promise<void> = Promise.resolve();
   /** 推送回调集合（日志、状态、执行记录），由主进程注入 */
@@ -71,7 +81,6 @@ class WebhookServer {
         return expected !== '' && tokenEquals(token, expected);
       },
     }))
-    // 限制请求体大小，防止无上限读入内存
     .use('/webhook/*', bodyLimit({ maxSize: WEBHOOK_BODY_LIMIT_BYTES }))
     .get('/health', (c) => c.json({ status: 'ok' }))
     .post('/webhook/:taskKey', async (c) => {
@@ -132,10 +141,7 @@ class WebhookServer {
   }
 
   /**
-   * 按设置应用服务状态（promise 链串行执行）：
-   * - 未启用：停止服务
-   * - 已启用且未运行或地址/端口变化：重启
-   * - 已启用且配置未变：跳过（避免设置面板其他字段保存时反复重启）
+   * 按设置应用服务状态：开关关闭时停止，配置变化时重启，未变化时跳过
    *
    * 渲染进程 persist 每次设置变更都会触发，端口连续输入等场景会产生并发调用；
    * 不串行化时第二次调用会在第一次的 stop/start 间隙误判"未运行"，导致重复监听泄漏。
@@ -145,26 +151,39 @@ class WebhookServer {
     const { webhookEnabled: enabled, webhookHost: host, webhookPort: port } = settings;
     // 入队前先隔离链上历史错误，避免前序 rejection 使后续回调被永久跳过；
     // 本次操作错误仍通过 run 向调用方传播，但不再污染链（链上以吞错副本为准）
-    const run = this.pending.catch(() => {}).then(() => this.applySettingsSerial(enabled, host, port));
+    const run = this.pending.catch(() => {}).then(() => this.applySettingsSerial(enabled, { host, port }));
     this.pending = run.catch(() => {});
     return run;
   }
 
-  /** 实际应用逻辑；仅由 {@link applySettings} 在串行链上调用（内部直接调私有 stopSerial，避免向自身链重复入队造成循环等待） */
-  private async applySettingsSerial(enabled: boolean, host: string, port: number): Promise<void> {
+  /**
+   * 实际应用逻辑；仅由 {@link applySettings} 在串行链上调用（内部直接调私有 stopSerial，避免向自身链重复入队造成循环等待）
+   *
+   * 相同配置在启动失败冷却期内跳过重试，
+   * 冷却期过后或配置变化时允许重试（用户关闭占用端口的进程后无需重启应用即可恢复）。
+   */
+  private async applySettingsSerial(enabled: boolean, target: WebhookTarget): Promise<void> {
     if (!enabled) {
       await this.stopSerial();
+      // 主动关闭视为有意操作：清除失败记录，之后重新开启时立即重试而非等待冷却期
+      this.lastFailed = null;
       return;
     }
-    if (this.server && this.appliedHost === host && this.appliedPort === port) {
+    if (this.running && this.running.target.host === target.host && this.running.target.port === target.port) {
       return;
+    }
+    if (this.lastFailed && this.lastFailed.target.host === target.host && this.lastFailed.target.port === target.port) {
+      if (Date.now() - this.lastFailed.at < START_RETRY_COOLDOWN_MS) {
+        return;
+      }
     }
     await this.stopSerial();
-    await this.start(host, port);
+    await this.start(target);
   }
 
   /** 启动 HTTP 服务；token 为空时先生成随机 token 持久化（渲染进程随后通过 settings:get 读到） */
-  private async start(host: string, port: number): Promise<void> {
+  private async start(target: WebhookTarget): Promise<void> {
+    const { host, port } = target;
     try {
       // 兜底：正常路径下渲染进程开启开关时已生成 token 并随设置写入；
       // 直接修改配置文件等旁路场景到达此处时才生成，保证服务可用（渲染进程 UI 需手动重新生成对齐）
@@ -176,13 +195,15 @@ class WebhookServer {
         server.once('listening', resolve);
         server.once('error', reject);
       });
-      this.server = server;
-      this.appliedHost = host;
-      this.appliedPort = port;
+      // 启动成功后清除失败记录，避免冷却期判断依赖过期的失败配置
+      this.lastFailed = null;
+      this.running = { server, target };
       this.log('INFO', `Webhook 服务已启动：http://${host}:${port}`);
     } catch (err) {
       // 启动失败（端口占用、token 兜底写盘失败等）仅记录日志，不影响应用其余功能（调度、手动执行照常）
       this.log('ERROR', `Webhook 服务启动失败（${host}:${port}）：${(err as Error)?.message ?? String(err)}`);
+      // 记录失败配置与时间
+      this.lastFailed = { target, at: Date.now() };
     }
   }
 
@@ -193,7 +214,7 @@ class WebhookServer {
    * keep-alive 复用连接，仅 close() 会等待其自然结束导致端口切换长时间阻塞。
    */
   stop(): Promise<void> {
-    // 与 applySettings 同样的错误隔离策略，保证链不被 rejection 卡死
+    // 同 applySettings：隔离链上历史错误，避免前序 rejection 卡死后续操作
     const run = this.pending.catch(() => {}).then(() => this.stopSerial());
     this.pending = run.catch(() => {});
     return run;
@@ -201,15 +222,12 @@ class WebhookServer {
 
   /** 实际停止逻辑；仅由 {@link stop} 在串行链上调用 */
   private async stopSerial(): Promise<void> {
-    if (!this.server) {
+    if (!this.running) {
       return;
     }
-    const server = this.server;
-    // 先记录本次监听地址再清空状态，供停止日志输出
-    const stoppedAt = `${this.appliedHost}:${this.appliedPort}`;
-    this.server = null;
-    this.appliedHost = null;
-    this.appliedPort = null;
+    const { server, target } = this.running;
+    const stoppedAt = `${target.host}:${target.port}`;
+    this.running = null;
     // ServerType 联合类型含 Http2Server（无此方法），HTTP/1.1 server 才有；in 收窄后调用
     if ('closeAllConnections' in server) {
       server.closeAllConnections();

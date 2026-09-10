@@ -154,8 +154,7 @@ app.whenReady().then(() => {
   // 设置持久化
   handleIpc('settings:get', () => getAllSettings()); // 获取设置
   handleIpc('settings:patch', (_event, data) => { // 写入设置
-    // 渲染进程 persist 为内存全量写入，可能携带未同步的空 Token；
-    // 已持久化非空 Token 时丢弃空值，避免覆盖导致 Webhook 鉴权失效
+    // 渲染进程 persist 为全量写入，可能携带未同步的空 Token 覆盖已持久化值，导致 Webhook 鉴权失效
     if (data.webhookToken === '' && getAllSettings().webhookToken !== '') {
       delete data.webhookToken;
     }
@@ -252,7 +251,6 @@ app.whenReady().then(() => {
   webhookServer.setCallbacks(taskCallbacks);
   void webhookServer.applySettings(getAllSettings());
 
-  // Webhook Token 重新生成：写入后立即生效（服务每次请求动态读取 token，无需重启）
   handleIpc('webhook:regenerate-token', () => regenerateWebhookToken());
 
   // 萌百多账号管理，每账号独立 session 分区隔离 cookie

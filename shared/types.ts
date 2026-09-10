@@ -15,7 +15,7 @@ export type MoegirlDomain = 'mzh.moegirl.org.cn' | 'zh.moegirl.org.cn';
 /** 背景轮播模式 */
 export type BackgroundMode = 'sequential' | 'random';
 
-/** Webhook 服务监听地址（仅本机回环 / 所有网卡） */
+/** Webhook 服务监听地址 */
 export type WebhookHost = '127.0.0.1' | '0.0.0.0';
 
 /** 应用设置数据（持久化存储形状，主进程 electron-store 与渲染进程 zustand 共用） */

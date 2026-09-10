@@ -93,7 +93,6 @@ export function resolveParams(
       const num = raw !== undefined && raw !== '' ? Number(raw) : NaN;
       value = Number.isNaN(num) ? undefined : num;
     } else if (typeof raw === 'number') {
-      // 字符串类字段收到数字（Webhook 传参无字段类型约束）：归一为字符串
       value = String(raw);
     } else if (typeof raw === 'string' && raw !== '') {
       value = raw;

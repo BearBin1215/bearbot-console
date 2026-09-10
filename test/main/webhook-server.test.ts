@@ -77,12 +77,20 @@ describe('webhookServer', () => {
     );
   });
 
-  it('Token 为空时启动服务前自动生成并持久化', async () => {
+  it('Token 为空时启动服务前自动生成并持久化（生成的 Token 可用于鉴权）', async () => {
     vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookToken: '', webhookPort: PORT }));
+    vi.mocked(runTask).mockResolvedValue({ success: true });
     await webhookServer.applySettings(makeSettings({ webhookToken: '', webhookPort: PORT }));
-    // 生成后 getAllSettings 返回带新 token 的设置（bearerAuth 请求时读取）
-    vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookToken: 'auto-gen', webhookPort: PORT }));
     expect(patchSettings).toHaveBeenCalledWith({ webhookToken: expect.any(String) });
+    // 写入的 token 即为后续请求的鉴权值：以写入值为准验证 bearerAuth 链路可用
+    const generated = vi.mocked(patchSettings).mock.calls.at(-1)?.[0].webhookToken ?? '';
+    vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookToken: generated, webhookPort: PORT }));
+    const res = await fetch(`http://127.0.0.1:${PORT}/webhook/taskA`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${generated}` },
+    });
+    expect(res.status).toBe(202);
+    expect(runTask).toHaveBeenCalledWith('taskA', callbacks, undefined);
   });
 
   it('缺少或错误的 Authorization 头返回 401', async () => {
@@ -163,7 +171,7 @@ describe('webhookServer', () => {
     const res = await fetch(`http://127.0.0.1:${PORT}/webhook/taskA`, {
       method: 'POST',
       headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' },
-      // 构造超过 1MB 上限的请求体（params 值为 2MB 字符串）
+      // 构造超过 1MB 上限的请求体
       body: JSON.stringify({ params: { pad: 'x'.repeat(2 * 1024 * 1024) } }),
     });
     expect(res.status).toBe(413);
@@ -171,7 +179,6 @@ describe('webhookServer', () => {
   });
 
   it('token 兜底写盘失败仅记录日志，不污染 promise 链', async () => {
-    // 空 token 触发兜底写盘，写盘抛错：错误被内部 catch，服务启动失败但不向上 rejection
     vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookToken: '', webhookPort: PORT }));
     vi.mocked(patchSettings).mockImplementationOnce(() => {
       throw new Error('disk full');
@@ -214,6 +221,15 @@ describe('webhookServer', () => {
     await expect(fetch(`http://127.0.0.1:${oldServerPort}/health`)).rejects.toThrow();
     // 新端口可访问
     const res = await fetch(`http://127.0.0.1:${NEW_PORT}/health`);
+    expect(res.status).toBe(200);
+  });
+
+  it('监听地址切换（127.0.0.1 -> 0.0.0.0）时重启服务', async () => {
+    await webhookServer.applySettings(makeSettings({ webhookPort: PORT }));
+    vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookHost: '0.0.0.0', webhookPort: PORT }));
+    await webhookServer.applySettings(makeSettings({ webhookHost: '0.0.0.0', webhookPort: PORT }));
+    // 0.0.0.0 覆盖全部网卡，127.0.0.1 仍可达，且切换后服务重新监听
+    const res = await fetch(`http://127.0.0.1:${PORT}/health`);
     expect(res.status).toBe(200);
   });
 
