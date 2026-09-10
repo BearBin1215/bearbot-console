@@ -110,6 +110,7 @@ const taskConfigSchema = z.object({
   cron: z.string(),
   enabled: z.boolean(),
   accountId: z.string().optional(),
+  webhookEnabled: z.boolean().optional(),
   overrides: z.object({
     name: z.string().optional(),
     description: z.string().optional(),

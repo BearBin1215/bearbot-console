@@ -170,6 +170,25 @@ describe('webhookServer', () => {
     expect(runTask).not.toHaveBeenCalled();
   });
 
+  it('token 兜底写盘失败仅记录日志，不污染 promise 链', async () => {
+    // 空 token 触发兜底写盘，写盘抛错：错误被内部 catch，服务启动失败但不向上 rejection
+    vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookToken: '', webhookPort: PORT }));
+    vi.mocked(patchSettings).mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    await expect(webhookServer.applySettings(makeSettings({ webhookPort: PORT }))).resolves.toBeUndefined();
+
+    expect(callbacks.sendLog).toHaveBeenCalledWith(
+      expect.objectContaining({ level: 'ERROR', message: expect.stringContaining('启动失败') }),
+    );
+    await expect(fetch(`http://127.0.0.1:${PORT}/health`)).rejects.toThrow();
+    // 链未被污染：后续设置变更仍正常应用并启动服务
+    const NEW_PORT = PORT + 2;
+    vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookPort: NEW_PORT }));
+    await webhookServer.applySettings(makeSettings({ webhookPort: NEW_PORT }));
+    expect((await fetch(`http://127.0.0.1:${NEW_PORT}/health`)).status).toBe(200);
+  });
+
   it('并发 applySettings 被串行化，不产生重复监听', async () => {
     // 模拟端口连续输入：两次设置变更几乎同时到达（第二次在第一次的 stop/start 间隙）
     const P1 = PORT;

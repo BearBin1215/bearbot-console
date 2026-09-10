@@ -60,6 +60,20 @@ describe('resolveParams', () => {
     )).toEqual({});
   });
 
+  test('string - 用户输入为数字 -> 归一为字符串（Webhook 传参无字段类型约束）', () => {
+    expect(resolveParams(
+      [{ key: 'name', label: '名称', type: 'string', default: '默认' }],
+      { name: 42 },
+    )).toEqual({ name: '42' });
+  });
+
+  test('string - 用户输入为数组等无效类型 -> 回退默认值', () => {
+    expect(resolveParams(
+      [{ key: 'name', label: '名称', type: 'string', default: '默认' }],
+      { name: ['a'] },
+    )).toEqual({ name: '默认' });
+  });
+
   // text 类型（与 string 行为一致，无专属解析逻辑）
 
   // number 类型

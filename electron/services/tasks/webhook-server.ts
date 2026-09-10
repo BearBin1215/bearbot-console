@@ -143,8 +143,11 @@ class WebhookServer {
    */
   applySettings(settings: SettingsData): Promise<void> {
     const { webhookEnabled: enabled, webhookHost: host, webhookPort: port } = settings;
-    this.pending = this.pending.then(() => this.applySettingsSerial(enabled, host, port));
-    return this.pending;
+    // 入队前先隔离链上历史错误，避免前序 rejection 使后续回调被永久跳过；
+    // 本次操作错误仍通过 run 向调用方传播，但不再污染链（链上以吞错副本为准）
+    const run = this.pending.catch(() => {}).then(() => this.applySettingsSerial(enabled, host, port));
+    this.pending = run.catch(() => {});
+    return run;
   }
 
   /** 实际应用逻辑；仅由 {@link applySettings} 在串行链上调用（内部直接调私有 stopSerial，避免向自身链重复入队造成循环等待） */
@@ -162,12 +165,12 @@ class WebhookServer {
 
   /** 启动 HTTP 服务；token 为空时先生成随机 token 持久化（渲染进程随后通过 settings:get 读到） */
   private async start(host: string, port: number): Promise<void> {
-    // 兜底：正常路径下渲染进程开启开关时已生成 token 并随设置写入；
-    // 直接修改配置文件等旁路场景到达此处时才生成，保证服务可用（渲染进程 UI 需手动重新生成对齐）
-    if (!getAllSettings().webhookToken) {
-      patchSettings({ webhookToken: generateToken() });
-    }
     try {
+      // 兜底：正常路径下渲染进程开启开关时已生成 token 并随设置写入；
+      // 直接修改配置文件等旁路场景到达此处时才生成，保证服务可用（渲染进程 UI 需手动重新生成对齐）
+      if (!getAllSettings().webhookToken) {
+        patchSettings({ webhookToken: generateToken() });
+      }
       const server = serve({ fetch: this.app.fetch, port, hostname: host });
       await new Promise<void>((resolve, reject) => {
         server.once('listening', resolve);
@@ -178,7 +181,7 @@ class WebhookServer {
       this.appliedPort = port;
       this.log('INFO', `Webhook 服务已启动：http://${host}:${port}`);
     } catch (err) {
-      // 端口占用等启动失败仅记录日志，不影响应用其余功能（调度、手动执行照常）
+      // 启动失败（端口占用、token 兜底写盘失败等）仅记录日志，不影响应用其余功能（调度、手动执行照常）
       this.log('ERROR', `Webhook 服务启动失败（${host}:${port}）：${(err as Error)?.message ?? String(err)}`);
     }
   }
@@ -190,8 +193,10 @@ class WebhookServer {
    * keep-alive 复用连接，仅 close() 会等待其自然结束导致端口切换长时间阻塞。
    */
   stop(): Promise<void> {
-    this.pending = this.pending.then(() => this.stopSerial());
-    return this.pending;
+    // 与 applySettings 同样的错误隔离策略，保证链不被 rejection 卡死
+    const run = this.pending.catch(() => {}).then(() => this.stopSerial());
+    this.pending = run.catch(() => {});
+    return run;
   }
 
   /** 实际停止逻辑；仅由 {@link stop} 在串行链上调用 */

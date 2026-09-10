@@ -63,7 +63,8 @@ export function formatRequestErrorDetail(detail: RequestErrorDetail): string {
  * 合并注册表参数默认值与用户输入
  *
  * 仅保留注册表声明的字段；用户输入为空时回退到字段默认值。
- * number 字段会将字符串输入转为数字（失败则回退默认值）。
+ * number 字段会将字符串输入转为数字（失败则回退默认值）；
+ * 字符串类字段收到数字输入时归一为字符串，其余无效类型回退默认值。
  * 多值字段（multi-string、multi-select）为 string[]，过滤空项后为空数组则回退默认值。
  * select 字段过滤不在可选项中的值（注册表变更后旧配置失效时回退默认值）。
  */
@@ -91,7 +92,10 @@ export function resolveParams(
       // number 字段：转为数字，NaN 或未输入视为无效
       const num = raw !== undefined && raw !== '' ? Number(raw) : NaN;
       value = Number.isNaN(num) ? undefined : num;
-    } else if (raw !== undefined && raw !== '') {
+    } else if (typeof raw === 'number') {
+      // 字符串类字段收到数字（Webhook 传参无字段类型约束）：归一为字符串
+      value = String(raw);
+    } else if (typeof raw === 'string' && raw !== '') {
       value = raw;
     }
     // select 字段：过滤不在可选项中的值，避免注册表变更后旧配置失效

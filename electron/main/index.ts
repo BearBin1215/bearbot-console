@@ -154,6 +154,11 @@ app.whenReady().then(() => {
   // 设置持久化
   handleIpc('settings:get', () => getAllSettings()); // 获取设置
   handleIpc('settings:patch', (_event, data) => { // 写入设置
+    // 渲染进程 persist 为内存全量写入，可能携带未同步的空 Token；
+    // 已持久化非空 Token 时丢弃空值，避免覆盖导致 Webhook 鉴权失效
+    if (data.webhookToken === '' && getAllSettings().webhookToken !== '') {
+      delete data.webhookToken;
+    }
     const rejected = patchSettings(data);
     if (rejected.length > 0) {
       // 写入的设置校验失败时作为系统警告日志推送到渲染进程界面并持久化

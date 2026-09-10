@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { App, Button, Input, InputNumber, Popconfirm, Radio, Switch, Tooltip } from 'antd';
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { WebhookHost } from '@shared/types';
@@ -15,6 +16,27 @@ export default function WebhookSettings() {
   const setWebhookPort = useSettingsStore((s) => s.setWebhookPort);
   const webhookToken = useSettingsStore((s) => s.webhookToken);
   const setWebhookToken = useSettingsStore((s) => s.setWebhookToken);
+
+  /** 端口输入草稿值：确认提交后才写入设置，避免逐字输入触发多次服务重启与日志刷屏 */
+  const [portDraft, setPortDraft] = useState<number | null>(webhookPort);
+  // 已保存端口被外部变更时同步草稿显示
+  useEffect(() => setPortDraft(webhookPort), [webhookPort]);
+
+  /** 提交端口草稿：合法且变更时写入设置，非法时回显当前已保存端口 */
+  const commitPort = () => {
+    const port = portDraft !== null && Number.isInteger(portDraft) && portDraft >= 1 && portDraft <= 65535
+      ? portDraft
+      : null;
+    // 经 getState 读取最新值：onPressEnter 与 onBlur 连续触发时避免重复写入
+    if (port !== null) {
+      if (port !== useSettingsStore.getState().webhookPort) {
+        setWebhookPort(port);
+      }
+      setPortDraft(port);
+    } else {
+      setPortDraft(useSettingsStore.getState().webhookPort);
+    }
+  };
 
   /** 复制 Token 到剪贴板 */
   const handleCopyToken = async () => {
@@ -85,8 +107,10 @@ export default function WebhookSettings() {
           max={65535}
           precision={0}
           controls={false}
-          value={webhookPort}
-          onChange={(v) => v !== null && setWebhookPort(v)}
+          value={portDraft}
+          onChange={(v) => setPortDraft(v)}
+          onPressEnter={commitPort}
+          onBlur={commitPort}
           disabled={!webhookEnabled}
         />
       </SettingItem>
