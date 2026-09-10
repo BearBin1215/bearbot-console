@@ -18,6 +18,8 @@ export interface TaskInfo extends TaskDefinition {
   enabled: boolean;
   /** 绑定的执行账号 id（未设置时回退到默认账号） */
   accountId?: string;
+  /** 是否允许通过 Webhook 触发（未设置视为 false） */
+  webhookEnabled?: boolean;
   /** 用户填写的任务参数值（来自持久化配置，未填项使用字段默认值占位） */
   paramValues?: TaskParamValues;
 }

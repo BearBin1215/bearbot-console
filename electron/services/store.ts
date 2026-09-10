@@ -41,6 +41,11 @@ const settingsDataSchema = z.object({
 
   closeBehavior: z.enum(['minimize', 'exit']),
   notifyOnTaskComplete: z.boolean(),
+
+  webhookEnabled: z.boolean(),
+  webhookHost: z.enum(['127.0.0.1', '0.0.0.0']),
+  webhookPort: z.number().int().min(1).max(65535),
+  webhookToken: z.string(),
 });
 
 const settingsStore = new Store<SettingsData>({

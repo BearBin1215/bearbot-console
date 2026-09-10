@@ -25,5 +25,10 @@ export function createDefaultSettings(appVersion: string): SettingsData {
 
     closeBehavior: 'minimize',
     notifyOnTaskComplete: false,
+
+    webhookEnabled: false,
+    webhookHost: '127.0.0.1',
+    webhookPort: 4765,
+    webhookToken: '',
   };
 }
