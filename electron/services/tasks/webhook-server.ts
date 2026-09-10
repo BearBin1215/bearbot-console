@@ -144,7 +144,8 @@ class WebhookServer {
 
   /** 启动 HTTP 服务；token 为空时先生成随机 token 持久化（渲染进程随后通过 settings:get 读到） */
   private async start(host: string, port: number): Promise<void> {
-    // 空 token 会让所有请求鉴权失败，启动前兜底生成
+    // 兜底：正常路径下渲染进程开启开关时已生成 token 并随设置写入；
+    // 直接修改配置文件等旁路场景到达此处时才生成，保证服务可用（渲染进程 UI 需手动重新生成对齐）
     if (!getAllSettings().webhookToken) {
       patchSettings({ webhookToken: generateToken() });
     }

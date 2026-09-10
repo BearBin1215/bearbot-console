@@ -29,6 +29,15 @@ export default function WebhookSettings() {
     message.success('Token 已重新生成');
   };
 
+  /** 开启服务时若 Token 为空则生成 */
+  const handleEnable = async (v: boolean) => {
+    if (v && !webhookToken) {
+      const token = await window.ipcRenderer.invoke('webhook:regenerate-token');
+      setWebhookToken(token);
+    }
+    setWebhookEnabled(v);
+  };
+
   return (
     <>
       <SettingItem
@@ -37,12 +46,12 @@ export default function WebhookSettings() {
       >
         <Switch
           checked={webhookEnabled}
-          onChange={setWebhookEnabled}
+          onChange={handleEnable}
         />
       </SettingItem>
       <SettingItem
         label='监听地址'
-        tooltip={<>仅本机：端口不对局域网开放，适合配合 frp / Cloudflare Tunnel 等转发；<br />局域网：允许局域网内设备直连</>}
+        tooltip={<>仅本机：仅回环地址可达（frp 等本机转发工具仍可连接），端口不对局域网开放；<br />局域网：所有网卡可达，局域网设备与本机转发（frp 等）均可连接</>}
       >
         <Radio.Group
           value={webhookHost}
