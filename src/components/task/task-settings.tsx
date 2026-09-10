@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Divider, Form, Input, InputNumber, Modal, Select, Typography } from 'antd';
+import { Divider, Form, Input, InputNumber, Modal, Select, Switch, Typography } from 'antd';
 import { Cron } from 'react-js-cron';
 import { formatCron } from '@/lib/cron';
 import { displayLabel } from '@/lib/account';
@@ -54,6 +54,8 @@ interface TaskSettingsProps {
   cron: string;
   /** 绑定的执行账号 id（未设置时为默认账号） */
   accountId?: string;
+  /** 是否允许通过 Webhook 触发 */
+  webhookEnabled?: boolean;
   /** 可选账号列表 */
   accounts: Account[];
   /** 默认名称（用于 placeholder） */
@@ -70,6 +72,7 @@ interface TaskSettingsProps {
     description: string;
     cron: string;
     accountId?: string;
+    webhookEnabled: boolean;
     params?: TaskParamValues;
   }) => void;
   /** 关闭回调 */
@@ -134,6 +137,7 @@ export default function TaskSettings({
   description,
   cron,
   accountId,
+  webhookEnabled,
   accounts,
   defaultName,
   defaultDescription,
@@ -152,7 +156,7 @@ export default function TaskSettings({
       // 先重置表单：任务参数为嵌套对象，setFieldsValue 会合并而非替换，
       // 不先 reset 会导致未保存的参数编辑在重新打开时残留（表现为输入即生效）
       form.resetFields();
-      form.setFieldsValue({ name, description, account: accountId });
+      form.setFieldsValue({ name, description, account: accountId, webhook: webhookEnabled ?? false });
       // 回填任务参数（未填项留空，让 placeholder/默认值生效）
       if (hasParams) {
         const paramObj: Record<string, number | string | string[]> = {};
@@ -166,7 +170,7 @@ export default function TaskSettings({
       }
       setTempCron(cron);
     }
-  }, [open, name, description, cron, accountId, accounts, form, hasParams, paramFields, paramValues]);
+  }, [open, name, description, cron, accountId, webhookEnabled, accounts, form, hasParams, paramFields, paramValues]);
 
   const handleSave = async () => {
     const values = await form.validateFields();
@@ -188,6 +192,7 @@ export default function TaskSettings({
       description: values.description?.trim() ?? '',
       cron: tempCron,
       accountId: values.account || undefined,
+      webhookEnabled: values.webhook ?? false,
       params,
     });
   };
@@ -247,6 +252,16 @@ export default function TaskSettings({
               value: a.id,
             }))}
           />
+        </Form.Item>
+
+        <Form.Item
+          label='Webhook 触发'
+          name='webhook'
+          valuePropName='checked'
+          className='mb-2!'
+          tooltip='开启后可通过 Webhook 接口触发本任务（需在设置中启用 Webhook 服务），与定时调度互不影响'
+        >
+          <Switch />
         </Form.Item>
 
         {hasParams && (

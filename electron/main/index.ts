@@ -27,6 +27,7 @@ import { getTaskDefinitions } from '../services/tasks/registry';
 import { runTask, stopTask, getRunningTasks } from '../services/tasks/runner';
 import { getMissedTaskRuns } from '../services/tasks/missed-check';
 import { scheduler } from '../services/tasks/scheduler';
+import { webhookServer, regenerateWebhookToken } from '../services/tasks/webhook-server';
 import { initLogger, appendLog, loadRecentLogs } from '../services/logger';
 import type { TaskRunCallbacks } from '../services/tasks/types';
 import {
@@ -124,6 +125,7 @@ app.on('will-quit', () => {
   touchLastAliveAt();
   destroyTray();
   scheduler.clear();
+  void webhookServer.stop();
 });
 
 // 须在 app ready 前注册特权协议（模块顶层执行）
@@ -152,10 +154,18 @@ app.whenReady().then(() => {
   // 设置持久化
   handleIpc('settings:get', () => getAllSettings()); // 获取设置
   handleIpc('settings:patch', (_event, data) => { // 写入设置
+    // 渲染进程 persist 为全量写入，可能携带未同步的空 Token 覆盖已持久化值，导致 Webhook 鉴权失效
+    if (data.webhookToken === '' && getAllSettings().webhookToken !== '') {
+      delete data.webhookToken;
+    }
     const rejected = patchSettings(data);
     if (rejected.length > 0) {
       // 写入的设置校验失败时作为系统警告日志推送到渲染进程界面并持久化
       sendSystemLog('WARN', `以下设置项因校验失败被忽略：${rejected.join('、')}`);
+    }
+    // Webhook 服务的开关/地址/端口变化时增量重启（applySettings 内部按需跳过无变化的重启）
+    if ('webhookEnabled' in data || 'webhookHost' in data || 'webhookPort' in data) {
+      void webhookServer.applySettings(getAllSettings());
     }
   });
   handleIpc('settings:open-dir', () => shell.openPath(path.dirname(getStorePath())));
@@ -236,6 +246,12 @@ app.whenReady().then(() => {
   // 初始化任务调度器：注入回调集合并加载已保存的配置
   scheduler.setCallbacks(taskCallbacks);
   scheduler.applyConfigs(getTaskConfigStore().configs);
+
+  // 初始化 Webhook 触发服务：与调度器共用回调集合（任务日志/状态/执行记录推送同一套链路）
+  webhookServer.setCallbacks(taskCallbacks);
+  void webhookServer.applySettings(getAllSettings());
+
+  handleIpc('webhook:regenerate-token', () => regenerateWebhookToken());
 
   // 萌百多账号管理，每账号独立 session 分区隔离 cookie
   handleIpc('accounts:list', () => getAccountInfos());
