@@ -24,18 +24,32 @@ export default function WebhookSettings() {
 
   /** 调用主进程重新生成 Token（旧 Token 立即失效） */
   const handleRegenerate = async () => {
-    const token = await window.ipcRenderer.invoke('webhook:regenerate-token');
-    setWebhookToken(token);
-    message.success('Token 已重新生成');
-  };
-
-  /** 开启服务时若 Token 为空则生成 */
-  const handleEnable = async (v: boolean) => {
-    if (v && !webhookToken) {
+    try {
       const token = await window.ipcRenderer.invoke('webhook:regenerate-token');
       setWebhookToken(token);
+      message.success('Token 已重新生成');
+    } catch {
+      message.error('Token 生成失败');
     }
-    setWebhookEnabled(v);
+  };
+
+  /**
+   * 开启服务时若 Token 为空则先生成再开启
+   *
+   * Token 必须由渲染进程发起生成并同步本地 state：若仅依赖主进程在服务启动时兜底生成，
+   * 渲染进程本地仍为空值，后续任意设置变更触发的全量持久化会把主进程的 Token 覆盖回空。
+   * 先写 Token 再写开关，保证携带 enabled: true 的那次持久化必然已带上新 Token。
+   */
+  const handleEnable = async (v: boolean) => {
+    try {
+      if (v && !webhookToken) {
+        const token = await window.ipcRenderer.invoke('webhook:regenerate-token');
+        setWebhookToken(token);
+      }
+      setWebhookEnabled(v);
+    } catch {
+      message.error('开启服务失败');
+    }
   };
 
   return (
@@ -97,7 +111,7 @@ export default function WebhookSettings() {
           </Tooltip>
           <Popconfirm
             title='重新生成 Token'
-            description='旧 Token 将立即失效，正在使用它的调用方需要更新'
+            description='旧 Token 将立即失效，调用方需要同步更新'
             okText='重新生成'
             cancelText='取消'
             onConfirm={handleRegenerate}

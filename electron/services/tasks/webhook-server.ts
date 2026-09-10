@@ -11,6 +11,7 @@
  */
 import { Hono } from 'hono';
 import { bearerAuth } from 'hono/bearer-auth';
+import { bodyLimit } from 'hono/body-limit';
 import { serve, type ServerType } from '@hono/node-server';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
@@ -41,6 +42,9 @@ function tokenEquals(actual: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** 请求体大小上限（1MB）：请求体仅含 params/wait 两个小字段，超出即异常请求 */
+const WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
+
 /**
  * Webhook 服务管理器
  *
@@ -53,6 +57,8 @@ class WebhookServer {
   /** 已成功应用的服务配置（地址 + 端口），用于判断设置变化是否需要重启 */
   private appliedHost: string | null = null;
   private appliedPort: number | null = null;
+  /** 在途的 applySettings/stop 操作链（promise 链串行化，消除并发调用导致的重复监听泄漏） */
+  private pending: Promise<void> = Promise.resolve();
   /** 推送回调集合（日志、状态、执行记录），由主进程注入 */
   private callbacks: TaskRunCallbacks | null = null;
 
@@ -65,6 +71,8 @@ class WebhookServer {
         return expected !== '' && tokenEquals(token, expected);
       },
     }))
+    // 限制请求体大小，防止无上限读入内存
+    .use('/webhook/*', bodyLimit({ maxSize: WEBHOOK_BODY_LIMIT_BYTES }))
     .get('/health', (c) => c.json({ status: 'ok' }))
     .post('/webhook/:taskKey', async (c) => {
       const taskKey = c.req.param('taskKey');
@@ -124,21 +132,31 @@ class WebhookServer {
   }
 
   /**
-   * 按设置应用服务状态：
+   * 按设置应用服务状态（promise 链串行执行）：
    * - 未启用：停止服务
    * - 已启用且未运行或地址/端口变化：重启
    * - 已启用且配置未变：跳过（避免设置面板其他字段保存时反复重启）
+   *
+   * 渲染进程 persist 每次设置变更都会触发，端口连续输入等场景会产生并发调用；
+   * 不串行化时第二次调用会在第一次的 stop/start 间隙误判"未运行"，导致重复监听泄漏。
+   * @param settings 应用后的完整设置（只使用 webhook 相关三字段）
    */
-  async applySettings(settings: SettingsData): Promise<void> {
+  applySettings(settings: SettingsData): Promise<void> {
     const { webhookEnabled: enabled, webhookHost: host, webhookPort: port } = settings;
+    this.pending = this.pending.then(() => this.applySettingsSerial(enabled, host, port));
+    return this.pending;
+  }
+
+  /** 实际应用逻辑；仅由 {@link applySettings} 在串行链上调用（内部直接调私有 stopSerial，避免向自身链重复入队造成循环等待） */
+  private async applySettingsSerial(enabled: boolean, host: string, port: number): Promise<void> {
     if (!enabled) {
-      await this.stop();
+      await this.stopSerial();
       return;
     }
     if (this.server && this.appliedHost === host && this.appliedPort === port) {
       return;
     }
-    await this.stop();
+    await this.stopSerial();
     await this.start(host, port);
   }
 
@@ -165,8 +183,19 @@ class WebhookServer {
     }
   }
 
-  /** 停止服务；未运行时为空操作 */
-  async stop(): Promise<void> {
+  /**
+   * 停止服务；未运行时为空操作（同样加入串行链，与在途的 applySettings 顺序执行）
+   *
+   * close 前先强制断开全部连接：wait=true 的同步请求可持续数分钟且 undici 默认
+   * keep-alive 复用连接，仅 close() 会等待其自然结束导致端口切换长时间阻塞。
+   */
+  stop(): Promise<void> {
+    this.pending = this.pending.then(() => this.stopSerial());
+    return this.pending;
+  }
+
+  /** 实际停止逻辑；仅由 {@link stop} 在串行链上调用 */
+  private async stopSerial(): Promise<void> {
     if (!this.server) {
       return;
     }
@@ -176,6 +205,10 @@ class WebhookServer {
     this.server = null;
     this.appliedHost = null;
     this.appliedPort = null;
+    // ServerType 联合类型含 Http2Server（无此方法），HTTP/1.1 server 才有；in 收窄后调用
+    if ('closeAllConnections' in server) {
+      server.closeAllConnections();
+    }
     await new Promise<void>((resolve) => server.close(() => resolve()));
     this.log('INFO', `Webhook 服务已停止（${stoppedAt}）`);
   }

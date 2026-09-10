@@ -158,6 +158,33 @@ describe('webhookServer', () => {
     expect(runTask).toHaveBeenCalledWith('taskA', callbacks, undefined);
   });
 
+  it('超过大小上限的请求体返回 413', async () => {
+    await webhookServer.applySettings(makeSettings({ webhookPort: PORT }));
+    const res = await fetch(`http://127.0.0.1:${PORT}/webhook/taskA`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' },
+      // 构造超过 1MB 上限的请求体（params 值为 2MB 字符串）
+      body: JSON.stringify({ params: { pad: 'x'.repeat(2 * 1024 * 1024) } }),
+    });
+    expect(res.status).toBe(413);
+    expect(runTask).not.toHaveBeenCalled();
+  });
+
+  it('并发 applySettings 被串行化，不产生重复监听', async () => {
+    // 模拟端口连续输入：两次设置变更几乎同时到达（第二次在第一次的 stop/start 间隙）
+    const P1 = PORT;
+    const P2 = PORT + 1;
+    vi.mocked(getAllSettings).mockReturnValue(makeSettings({ webhookPort: P1 }));
+    // 并发发起，不 await 第一个
+    const first = webhookServer.applySettings(makeSettings({ webhookPort: P1 }));
+    const second = webhookServer.applySettings(makeSettings({ webhookPort: P2 }));
+    await Promise.all([first, second]);
+    // 最终只有一个端口存活（后应用的 P2）
+    await expect(fetch(`http://127.0.0.1:${P1}/health`)).rejects.toThrow();
+    const res = await fetch(`http://127.0.0.1:${P2}/health`);
+    expect(res.status).toBe(200);
+  });
+
   it('地址或端口变化时重启服务', async () => {
     await webhookServer.applySettings(makeSettings({ webhookPort: PORT }));
     const oldServerPort = PORT;

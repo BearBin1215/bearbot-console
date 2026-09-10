@@ -39,6 +39,7 @@ export function buildTaskList(
       cron: config.cron,
       enabled: config.enabled,
       accountId: config.accountId,
+      webhookEnabled: config.webhookEnabled,
       defaultName: def.defaultName,
       defaultDescription: def.defaultDescription,
       params: def.params,
