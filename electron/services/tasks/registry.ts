@@ -15,6 +15,7 @@ import vnEditStat from '../../tasks/vn-edit-stat';
 import vnCvUpdateTime from '../../tasks/vn-cv-update-time';
 import syncFeishuTableData from '../../tasks/sync-feishu-tabledata';
 import messUpdater from '../../tasks/mess-updater';
+import massEditUsage, { DEFAULT_RC_MAX_AGE_DAYS } from '../../tasks/mass-edit-usage';
 
 /** 任务注册表项（元数据 + 执行函数） */
 interface TaskEntry {
@@ -108,6 +109,49 @@ export const TASK_REGISTRY: Record<string, TaskEntry> = {
     defaultName: '更新杂物间',
     defaultDescription: '更新[[User:BearBin/杂物]]页面',
     handler: messUpdater,
+  },
+  'mass-edit-usage': {
+    defaultName: 'MassEdit使用量统计',
+    defaultDescription: '更新[[User:BearBot/MassEditUsage.json]]',
+    params: [
+      {
+        key: 'reset',
+        label: '重置进度',
+        type: 'select',
+        default: 'false',
+        options: [
+          { label: '否（沿用已累计结果，仅统计新增编辑）', value: 'false' },
+          { label: '是（丢弃已累计结果，从头重扫）', value: 'true' },
+        ],
+        help: '首次运行或需要完全重算时选「是」',
+      },
+      {
+        key: 'recentDays',
+        label: '仅统计最近天数',
+        type: 'number',
+        default: 0,
+        help: '大于 0 时改为统计最近 N 天，用于快速验证（不参与断点续跑，每次重新统计）',
+      },
+      {
+        key: 'rcMaxAgeDays',
+        label: '最近更改保留期(天)',
+        type: 'number',
+        default: DEFAULT_RC_MAX_AGE_DAYS,
+        help: '距上次统计未超过该天数时用「最近更改」做增量（几十次请求即可）；超出则回落到「用户贡献」补缺口',
+      },
+      {
+        key: 'dryRun',
+        label: '试运行',
+        type: 'select',
+        default: 'true',
+        options: [
+          { label: '是（仅统计并输出日志，不写入页面）', value: 'true' },
+          { label: '否（统计完成后更新结果页面）', value: 'false' },
+        ],
+        help: '首次运行建议保持「是」，确认统计数据无误后再改为「否」',
+      },
+    ],
+    handler: massEditUsage,
   },
 };
 
