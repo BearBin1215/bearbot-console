@@ -120,6 +120,16 @@ function redundantPipeShared(messOutput: MessOutput): PageCheck {
   };
 }
 
+/** 冗余 {{0}} 模板检查（0和10共用），用于排查 `{{0}}01月`、`{{0}}29日` 这类冗余的日期前缀 */
+function redundantZeroShared(messOutput: MessOutput): PageCheck {
+  return (text, _categories, title) => {
+    const matches = text.match(/\{\{s*0\s*\}\}\d\d[日月]/g);
+    if (matches) {
+      messOutput.addPageToList('冗余<nowiki>{{0}}</nowiki>', [title, `<code><nowiki>${matches[0]}</nowiki></code>`]);
+    }
+  };
+}
+
 /** 弃用 HTML 标签及其匹配正则（center/tt/strike/font），带 g 标志的 match 不依赖 lastIndex，可安全复用 */
 const DEPRECATED_TAGS = [
   { tag: 'center', regex: /<(center)(?:\s[^>]*)?>|<\/center>/gi },
@@ -307,7 +317,7 @@ export function createMainChecks(ctx: CheckContext): PageCheck[] {
     pipeInDisambig, wrapDetector, bigDetector, repetitiveTop, imgLT99px,
     redBoldText, headlineBeforeNav, refBeforeNav, templateOrder, innerToOuter,
     redundantPipeShared(messOutput), oldCVCategory, httpColon, deprecatedTagsShared(messOutput),
-    duplicateBirthday, isolatedKatakana,
+    duplicateBirthday, isolatedKatakana, redundantZeroShared(messOutput),
   ];
 }
 
@@ -379,5 +389,6 @@ export function createTemplateChecks(ctx: CheckContext): PageCheck[] {
   return [
     imgLT99pxInTemplate, redundantWrapInTemplate, needSpaceBesidesPoint,
     redundantPipeShared(messOutput), wrongNavName, deprecatedTagsShared(messOutput),
+    redundantZeroShared(messOutput),
   ];
 }

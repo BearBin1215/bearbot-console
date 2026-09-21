@@ -138,6 +138,7 @@ export const MESS_DATA: PageData = {
     两个或以上: [],
     一个: [],
   },
+  '冗余<nowiki>{{0}}</nowiki>': [],
   '•左右少空格': {
     左侧缺少: [],
     右侧缺少: [],
