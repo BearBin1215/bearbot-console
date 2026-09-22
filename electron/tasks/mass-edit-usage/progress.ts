@@ -128,10 +128,14 @@ export function clearProgress(): void {
 
 /**
  * 取时间戳所在整秒的下一秒
+ *
+ * API 的时间戳比较按秒截断且下界为闭区间，因此它既用于从窗口上界推覆盖点，
+ * 也用于把结果页面上的覆盖上界还原为可续跑的下界。
+ *
  * @param timestamp ISO 8601 时间戳
  * @returns 秒数为整的 ISO 8601 时间戳
  */
-function toNextWholeSecond(timestamp: string): string {
+export function toNextWholeSecond(timestamp: string): string {
   return new Date(Math.floor(Date.parse(timestamp) / 1000) * 1000 + 1000).toISOString();
 }
 

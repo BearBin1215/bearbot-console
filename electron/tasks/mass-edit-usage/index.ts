@@ -16,6 +16,7 @@ import {
   saveProgress,
 } from './progress';
 import type { MassEditUsageProgress } from './progress';
+import { restoreProgress } from './restore';
 import { scanByRecentChanges, scanByUserContribs } from './scans';
 import { formatSiteTime } from './time';
 
@@ -33,7 +34,7 @@ const EDIT_SUMMARY = '自动更新列表';
 
 /** 统计结果 JSON 的结构（字段与键名保持结果页面既有格式，另补充月度维度） */
 interface MassEditUsageData {
-  /** 本次统计完成时间（ISO 8601） */
+  /** 数据覆盖到的上界（各站窗口上界的最小值，ISO 8601） */
   lastUpdate: string;
   /** 站点键 -> 用户名 -> MassEdit 编辑次数 */
   usage: Record<string, Record<string, number>>;
@@ -49,6 +50,17 @@ interface MassEditUsageData {
 }
 
 /**
+ * 解析「仅统计最近天数」参数
+ *
+ * @param params 任务参数
+ * @returns 有效天数；未配置、非正数或无法解析时返回 0
+ */
+function resolveRecentDays(params: TaskParamValues): number {
+  const days = Number(params.recentDays);
+  return Number.isFinite(days) && days > 0 ? days : 0;
+}
+
+/**
  * 解析本次运行实际生效的统计起点
  *
  * 默认从 {@link DEFAULT_SINCE}（MassEdit 小工具启用时间）开始，覆盖该工具的全部使用历史；
@@ -59,8 +71,8 @@ interface MassEditUsageData {
  * @returns ISO 8601 字符串（UTC）
  */
 function resolveSince(params: TaskParamValues): string {
-  const recentDays = Number(params.recentDays);
-  if (Number.isFinite(recentDays) && recentDays > 0) {
+  const recentDays = resolveRecentDays(params);
+  if (recentDays > 0) {
     return new Date(Date.now() - recentDays * 24 * 60 * 60 * 1000).toISOString();
   }
   return DEFAULT_SINCE;
@@ -98,6 +110,7 @@ function sortRecord(
  *
  * 首次运行会从 {@link DEFAULT_SINCE} 起完整回溯；之后每次运行只需统计上次覆盖点至今的增量。
  * 窗口扫描完成即结束窗口并推进覆盖点（见 ./progress），因此无论页面是否写入成功，下次都不会重复统计同一区间。
+ * 本地进度文件丢失时改从结果页面接续（见 ./restore），不必重新枚举全站用户。
  */
 const massEditUsage: TaskHandler = async ({ api, commonsApi, logger, params, signal, user }) => {
   const since = resolveSince(params);
@@ -109,16 +122,9 @@ const massEditUsage: TaskHandler = async ({ api, commonsApi, logger, params, sig
   const rcMaxAgeDays = resolveRcMaxAgeDays(params.rcMaxAgeDays);
   /** 试运行：仅统计并输出日志，不写入结果页面。未显式配置时保持试运行，避免误写页面 */
   const dryRun = params.dryRun !== 'false';
-
-  // 重置：删除进度文件，下次从统计起点重新累计。若保留旧累计值，会与重扫结果重复计数
-  if (params.reset === 'true') {
-    clearProgress();
-  }
-  // 统计起点被改动说明需要在更早的时间范围内重扫，此时同样丢弃旧累计值
-  const cached = loadProgress();
-  const progress: MassEditUsageProgress = cached?.since === since ? cached : createProgress(since);
-
-  const persist = () => saveProgress(progress);
+  const reset = params.reset === 'true';
+  /** 「仅统计最近天数」模式每次都以当前时间重新定位起点，既不续跑，也不接续任何历史累计值 */
+  const isRecentWindow = resolveRecentDays(params) > 0;
 
   /** 参与统计的站点，键名沿用结果页面既有格式的 zh / cm */
   const sites = [
@@ -126,12 +132,38 @@ const massEditUsage: TaskHandler = async ({ api, commonsApi, logger, params, sig
     { key: 'cm', label: '共享站', client: commonsApi },
   ] as const;
 
+  // 重置：删除进度文件，下次从统计起点重新累计。若保留旧累计值，会与重扫结果重复计数
+  if (reset) {
+    clearProgress();
+  }
+  // 统计起点被改动说明需要在更早的时间范围内重扫，此时同样丢弃旧累计值；
+  // 进度文件还会因换机、重装、清理缓存而丢失，这时从结果页面接续，避免重新枚举全站用户
+  const cached = loadProgress();
+  let progress: MassEditUsageProgress;
+  if (reset || isRecentWindow) {
+    progress = createProgress(since);
+  } else if (cached?.since === since) {
+    progress = cached;
+  } else {
+    progress = (await restoreProgress(api, TARGET_PAGE, since, sites, logger)) ?? createProgress(since);
+  }
+
+  const persist = () => saveProgress(progress);
+
+  // 窗口上界在开扫前固定且两站共用，使结果页面的 lastUpdate 恰好等于各站数据覆盖到的上界
+  const runStartedAt = new Date().toISOString();
+  /** 数据整体覆盖到的上界：取各站实际窗口上界的最小值（续跑站点的上界会早于本次启动时刻） */
+  let coveredUpTo = runStartedAt;
+
   for (const site of sites) {
     const stage = (progress.sites[site.key] ??= createSiteProgress());
     /** 该站点的窗口下界：续跑沿用上次窗口的下界，否则从覆盖点或统计起点开始 */
     const windowStart = stage.coveredUntil ?? progress.since;
     /** 该站点的窗口上界；已有未完成的窗口时沿用其原上界，使补扫仍落在同一区间 */
-    const windowUntil = openWindow(stage, new Date().toISOString());
+    const windowUntil = openWindow(stage, runStartedAt);
+    if (Date.parse(windowUntil) < Date.parse(coveredUpTo)) {
+      coveredUpTo = windowUntil;
+    }
     // 覆盖点仍在最近更改保留期内时，增量走更轻量的数据源
     const withinRcRetention = stage.coveredUntil !== null
       && Date.now() - Date.parse(stage.coveredUntil) <= rcMaxAgeDays * 24 * 60 * 60 * 1000;
@@ -173,7 +205,7 @@ const massEditUsage: TaskHandler = async ({ api, commonsApi, logger, params, sig
     .reduce((sum, count) => sum + count, 0);
 
   const data: MassEditUsageData = {
-    lastUpdate: new Date().toISOString(),
+    lastUpdate: coveredUpTo,
     usage,
     monthly,
     statistic: { userCount: users.size, editCount },
