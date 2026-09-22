@@ -36,8 +36,8 @@
   - 值为 `false` 的参数会被**丢弃**（用于条件性传参，如 `gcmcontinue: false` 不发送）。
 - **HTTP**：POST 时参数放进 `URLSearchParams` body；携带 `User-Agent`（来自设置）与 `credentials: 'include'`（复用账号 session 的 cookie）。
 - **超时**：30 秒（`AbortController`）。
-- **重试**：按设置 `retryCount`（默认 1）/`retryInterval`（默认 3000ms）重试；`badtoken`、`permissiondenied`、`invalidtitle` 等不可重试错误码立即抛出（`NON_RETRYABLE_ERRORS`）。
-- **错误解析**：即使 HTTP 200，若响应体含 `error` 字段也会抛出 `Error(error.info || error.code)`。
+- **重试**：按设置 `retryCount`（默认 1）/`retryInterval`（默认 3000ms）重试；`badtoken`、`permissiondenied`、`accessdenied`、`invalidtitle` 等不可重试错误码立即抛出（`NON_RETRYABLE_ERRORS`）。
+- **错误解析**：即使 HTTP 200，若响应体含 `error` 字段也会抛出 `Error(error.info || error.code)`；最终包装为 `MoegirlRequestError`，同时保留错误码（`error.apiCode`）与请求/响应详情（`error.detail`）。任务可据此按错误码分支处理，如 `accessdenied` 表示当前账号无权读取该内容。
 
 ## 3. 编辑页面
 

@@ -9,10 +9,11 @@ vi.mock('../../electron/tasks/mess-updater/page-store', () => ({
   upsertPages: vi.fn(),
 }));
 
-import { mergePages, reconcileRevids, type ApiResponsePage } from '../../electron/tasks/mess-updater/index';
+import { fetchPagesWithDeniedIsolation, mergePages, reconcileRevids, type ApiResponsePage } from '../../electron/tasks/mess-updater/index';
 import { MessOutput, type PageData } from '../../electron/tasks/mess-updater/output';
 import { checkOrder, createMainChecks, regexPosition } from '../../electron/tasks/mess-updater/checks';
 import type { PageRecord } from '../../electron/tasks/mess-updater/page-store';
+import type { MoegirlApi } from '../../electron/services/moegirl';
 
 
 // 测试 mergePages 函数（将 API 响应中的页面合并到 Map，处理续传响应的重复页面）
@@ -182,6 +183,101 @@ describe('reconcileRevids', () => {
 });
 
 // #endregion
+
+
+// 测试 fetchPagesWithDeniedIsolation（受限页面导致整批请求被拒时定位并跳过该标题）
+describe('fetchPagesWithDeniedIsolation', () => {
+  /** 构造访问拒绝错误，字段与 MoegirlRequestError 的 apiCode 一致 */
+  function accessDenied(info: string): Error {
+    return Object.assign(new Error(info), { apiCode: 'accessdenied' });
+  }
+
+  /** 单批请求固定返回的 revid */
+  const REVID = 100;
+
+  /**
+   * 构造 MoegirlApi 请求替身
+   *
+   * 与真实 API 一致：请求标题中命中受限列表时整批抛出 accessdenied（不含任何页面数据），
+   * 错误信息按 keyword 生成（默认内嵌被拒标题，可传固定文本模拟无法定位标题的情况）。
+   *
+   * @param restricted 受限标题列表
+   * @param keyword 错误信息中的标题文本，缺省为被拒标题本身
+   */
+  function createApi(restricted: string[], keyword?: string) {
+    const post = vi.fn(async (params: { titles: string[] }) => {
+      const denied = params.titles.find((title) => restricted.includes(title));
+      if (denied) {
+        throw accessDenied(`You are not allowed to view ${keyword ?? denied}.`);
+      }
+      return {
+        query: {
+          pages: params.titles.map((title, index) => ({
+            title,
+            pageid: index + 1,
+            ns: 0,
+            revisions: [{ revid: REVID, slots: { main: { content: `正文${title}` } } }],
+          })),
+        },
+      };
+    });
+    return { api: { post } as unknown as MoegirlApi, post };
+  }
+
+  it('无受限标题 -> 一次请求写入全部页面', async () => {
+    const { api, post } = createApi([]);
+    const pageMap = new Map<string, PageRecord>();
+    const deniedTitles = new Set<string>();
+
+    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B'], pageMap, deniedTitles);
+
+    expect([...pageMap.keys()]).toEqual(['页面A', '页面B']);
+    expect(deniedTitles.size).toBe(0);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('错误信息内嵌标题 -> 单独验证后只补拉其余标题', async () => {
+    const { api, post } = createApi(['页面B']);
+    const pageMap = new Map<string, PageRecord>();
+    const deniedTitles = new Set<string>();
+
+    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B', '页面C'], pageMap, deniedTitles);
+
+    expect([...deniedTitles]).toEqual(['页面B']);
+    expect([...pageMap.keys()]).toEqual(['页面A', '页面C']);
+    // 整批失败 -> 单独验证页面B失败 -> 其余标题一次拉完
+    expect(post).toHaveBeenCalledTimes(3);
+  });
+
+  it('错误信息无法定位标题 -> 二分缩小到单个标题', async () => {
+    const { api } = createApi(['页面B'], 'denied');
+    const pageMap = new Map<string, PageRecord>();
+    const deniedTitles = new Set<string>();
+
+    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B'], pageMap, deniedTitles);
+
+    expect([...deniedTitles]).toEqual(['页面B']);
+    expect([...pageMap.keys()]).toEqual(['页面A']);
+  });
+
+  it('一批含多个受限标题 -> 全部定位并跳过', async () => {
+    const { api } = createApi(['页面A', '页面D'], 'denied');
+    const pageMap = new Map<string, PageRecord>();
+    const deniedTitles = new Set<string>();
+
+    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B', '页面C', '页面D'], pageMap, deniedTitles);
+
+    expect([...deniedTitles].sort()).toEqual(['页面A', '页面D']);
+    expect([...pageMap.keys()]).toEqual(['页面B', '页面C']);
+  });
+
+  it('非访问拒绝错误 -> 原样抛出', async () => {
+    const api = { post: vi.fn(async () => { throw new Error('网络错误'); }) } as unknown as MoegirlApi;
+
+    await expect(fetchPagesWithDeniedIsolation(api, ['页面A'], new Map(), new Set()))
+      .rejects.toThrow('网络错误');
+  });
+});
 
 
 // 测试 MessOutput.addPageToList（BFS 遍历分类树查找并插入页面）
