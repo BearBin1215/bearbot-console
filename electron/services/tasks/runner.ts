@@ -52,6 +52,9 @@ export function formatRequestErrorDetail(detail: RequestErrorDetail): string {
   if (detail.status !== undefined) {
     lines.push(`响应：HTTP ${detail.status}`);
   }
+  if (detail.apiCode !== undefined) {
+    lines.push(`错误码：${detail.apiCode}`);
+  }
   if (detail.responseBody !== undefined) {
     lines.push('响应体：');
     lines.push(detail.responseBody);

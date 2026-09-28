@@ -142,6 +142,8 @@ const NON_RETRYABLE_ERRORS = [
   'invalidparam',
   'invalidtitle',
   'nosuchpage',
+  // 读取权限被拒（如敏感页面），重复请求结果不变
+  'accessdenied',
 ];
 
 /** API 请求失败时的请求、响应详情 */
@@ -154,6 +156,8 @@ export interface RequestErrorDetail {
   status?: number;
   /** 响应体。无响应时为 undefined */
   responseBody?: string;
+  /** 响应体中的 API 错误码（如 accessdenied）。非 API 错误（网络/超时/解析失败）时为 undefined */
+  apiCode?: string;
   /** 请求超时时间（毫秒） */
   timeout: number;
 }
@@ -179,6 +183,11 @@ export class MoegirlRequestError extends Error {
     super(parts.join('，'), { cause: error });
     this.name = 'MoegirlRequestError';
     this.detail = detail;
+  }
+
+  /** 响应体中的 API 错误码（如 accessdenied），非 API 错误时为 undefined */
+  get apiCode(): string | undefined {
+    return this.detail.apiCode;
   }
 }
 
@@ -435,6 +444,8 @@ export class MoegirlApi {
     let lastStatus: number | undefined;
     /** 最近一次失败请求的响应体，每次尝试前重置 */
     let lastResponseBody: string | undefined;
+    /** 最近一次失败请求的 API 错误码，每次尝试前重置 */
+    let lastApiCode: string | undefined;
     /** 已请求次数 */
     let attempt = 0;
 
@@ -453,6 +464,7 @@ export class MoegirlApi {
       // 每次尝试前重置响应记录，避免上一次尝试的响应残留到本次网络错误
       lastStatus = undefined;
       lastResponseBody = undefined;
+      lastApiCode = undefined;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
       // 任务取消信号触发时立即中断本次在飞请求
@@ -480,6 +492,7 @@ export class MoegirlApi {
         if (data?.error) {
           lastStatus = res.status;
           lastResponseBody = body;
+          lastApiCode = data.error.code;
           throw new Error(data.error.info || data.error.code);
         }
         return data;
@@ -516,12 +529,14 @@ export class MoegirlApi {
       throw new DOMException('Aborted', 'AbortError');
     }
     const error = lastError ?? new Error('请求失败');
-    throw new MoegirlRequestError(
-      error,
-      params.action,
-      attempt,
-      { method, requestParams: merged, status: lastStatus, responseBody: lastResponseBody, timeout },
-    );
+    throw new MoegirlRequestError(error, params.action, attempt, {
+      method,
+      requestParams: merged,
+      status: lastStatus,
+      responseBody: lastResponseBody,
+      apiCode: lastApiCode,
+      timeout,
+    });
   }
 }
 

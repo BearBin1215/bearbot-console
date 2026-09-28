@@ -1,9 +1,8 @@
 import type { TaskContext, TaskHandler } from '../../services/tasks/types';
 import type { MoegirlApi, RevisionSlots, TitleEntry } from '../../services/moegirl';
-import { deletePages, getPageCount, getPageRevids, iteratePages, upsertPages, type PageRecord } from './page-store';
+import { deletePages, getPageCount, getPageRevids, iteratePages, upsertPageMetas, upsertPages, type PageRecord } from './page-store';
 import { createMainChecks, createTemplateChecks } from './checks';
 import { MESS_DATA, MessOutput } from './output';
-import { clearProgress, loadProgress, saveProgress } from './progress';
 
 /** 需要排除的页顶提示模板名称 */
 const EXCLUDED_TOP_TIPS = ['架空历史'];
@@ -13,6 +12,12 @@ const LOG_INTERVAL = 20000;
 
 /** 本任务追踪的命名空间（主空间与模板空间） */
 const TRACKED_NAMESPACES = [0, 10];
+
+/** 单批补拉标题数量（`titles` 参数上限，机器人账号可达 500） */
+const TITLE_BATCH = 500;
+
+/** 单条日志中列出的标题数量上限（超出部分仅显示数量） */
+const LOG_TITLE_LIMIT = 20;
 
 /** API 响应中的页面数据结构 */
 export interface ApiResponsePage {
@@ -30,7 +35,7 @@ export interface ApiResponsePage {
   missing?: boolean;
 }
 
-/** 增量同步所需的依赖上下文（便于脱离 TaskContext 单独测试） */
+/** 页面同步所需的依赖上下文（便于脱离 TaskContext 单独测试） */
 interface SyncCtx {
   /** 萌百 API 实例 */
   api: MoegirlApi;
@@ -93,27 +98,42 @@ function flushPages(pageMap: Map<string, PageRecord>): number {
   return pages.length;
 }
 
-/** API 响应中仅含 revid 的页面数据结构（全量 revid 清单拉取用） */
-interface ApiRevidPage {
+/** 页面元数据（不含正文，来自 `prop=info` 枚举，用于增量比对与受限页面的版本记录） */
+export interface PageMeta {
+  /** 页面 ID */
+  pageid: number;
+  /** 命名空间编号 */
+  ns: number;
+  /** 最新修订版本 ID */
+  revid: number;
+}
+
+/** API 响应中仅含页面元数据的数据结构（页面清单拉取用） */
+interface ApiInfoPage {
   /** 页面标题 */
   title: string;
-  /** 修订信息（仅含 revid，无正文） */
-  revisions?: Array<{ revid: number }>;
+  /** 页面 ID */
+  pageid: number;
+  /** 命名空间编号 */
+  ns: number;
+  /** 最新修订版本 ID */
+  lastrevid?: number;
 }
 
 /**
- * 拉取指定命名空间的全量页面标题与 revid 清单
+ * 拉取指定命名空间的页面清单（标题与元数据）
  *
- * 使用 `generator=allpages` + `prop=revisions` + `rvprop=ids`，`gaplimit=max` 翻页。
- * 因 `rvprop=ids` 不含正文，每页仅一条 revision，不产生 `rvcontinue`，仅 `gapcontinue` 翻页。
+ * 使用 `generator=allpages` + `prop=info`，`gaplimit=max` 翻页。`prop=info` 只取页面元数据、
+ * 不请求正文，因此不受敏感页面的读取限制影响（这些页面仍在页面列表中），
+ * 其正文在后续按标题补拉时由 {@link fetchPagesWithDeniedIsolation} 定位并跳过。
  *
  * @param ctx 依赖上下文
  * @param namespace 命名空间编号（0=主空间, 10=模板空间）
- * @returns 标题到 revid 的映射
+ * @returns 标题到页面元数据的映射
  */
-async function fetchPageRevids(ctx: SyncCtx, namespace: number): Promise<Map<string, number>> {
+async function fetchNamespaceMeta(ctx: SyncCtx, namespace: number): Promise<Map<string, PageMeta>> {
   const { api } = ctx;
-  const result = new Map<string, number>();
+  const result = new Map<string, PageMeta>();
   let gapcontinue: string | false = false;
   do {
     const response = await api.post({
@@ -122,13 +142,11 @@ async function fetchPageRevids(ctx: SyncCtx, namespace: number): Promise<Map<str
       gapnamespace: namespace,
       gaplimit: 'max',
       gapcontinue,
-      prop: 'revisions',
-      rvprop: 'ids',
+      prop: 'info',
     });
-    for (const page of response.query.pages as ApiRevidPage[]) {
-      const revid = page.revisions?.[0]?.revid;
-      if (revid !== undefined) {
-        result.set(page.title, revid);
+    for (const page of response.query.pages as ApiInfoPage[]) {
+      if (page.lastrevid !== undefined) {
+        result.set(page.title, { pageid: page.pageid, ns: page.ns, revid: page.lastrevid });
       }
     }
     gapcontinue = response.continue?.gapcontinue || false;
@@ -137,29 +155,29 @@ async function fetchPageRevids(ctx: SyncCtx, namespace: number): Promise<Map<str
 }
 
 /**
- * 对比 API revid 清单与本地 DB，计算待补拉与待删除的标题
+ * 对比 API 页面清单与本地 DB，计算待补拉与待删除的标题
  *
  * - API 有、DB 无或 revid 不同 -> 待补拉（新增或变更）
  * - DB 有、API 无 -> 待删除（被删除或移走）
  *
- * @param apiRevids API 返回的标题到 revid 映射
+ * @param apiMeta API 返回的标题到页面元数据映射
  * @param dbRevids 本地 DB 的标题到 revid 映射
  * @returns 待补拉标题集合与待删除标题集合
  */
-export function reconcileRevids(apiRevids: Map<string, number>, dbRevids: Map<string, number>): {
+export function reconcileRevids(apiMeta: Map<string, PageMeta>, dbRevids: Map<string, number>): {
   titlesToFetch: Set<string>;
   titlesToDelete: Set<string>;
 } {
   const titlesToFetch = new Set<string>();
   const titlesToDelete = new Set<string>();
-  for (const [title, apiRevid] of apiRevids) {
+  for (const [title, meta] of apiMeta) {
     const dbRevid = dbRevids.get(title);
-    if (dbRevid === undefined || dbRevid !== apiRevid) {
+    if (dbRevid === undefined || dbRevid !== meta.revid) {
       titlesToFetch.add(title);
     }
   }
   for (const title of dbRevids.keys()) {
-    if (!apiRevids.has(title)) {
+    if (!apiMeta.has(title)) {
       titlesToDelete.add(title);
     }
   }
@@ -167,40 +185,120 @@ export function reconcileRevids(apiRevids: Map<string, number>, dbRevids: Map<st
 }
 
 /**
+ * 单次拉取一批标题的正文与分类（含续传）
+ *
+ * @param api 萌百 API 实例
+ * @param titles 本批标题
+ * @param pageMap 累积页面数据的 Map（以标题为键）
+ */
+async function fetchTitleBatch(api: MoegirlApi, titles: string[], pageMap: Map<string, PageRecord>): Promise<void> {
+  let continueParams: Record<string, unknown> = {};
+  do {
+    const response = await api.post({
+      action: 'query',
+      prop: ['revisions', 'categories'],
+      titles,
+      rvprop: ['content', 'ids'],
+      rvslots: 'main',
+      cllimit: 'max',
+      ...continueParams,
+    });
+    mergePages(pageMap, response.query.pages as ApiResponsePage[]);
+    continueParams = response.continue || {};
+  } while (continueParams.clcontinue !== undefined || continueParams.rvcontinue !== undefined);
+}
+
+/**
+ * 判断错误是否为受限页面（敏感内容）导致的访问拒绝
+ *
+ * 按错误码判断而不依赖 `instanceof`，使本模块不必引入请求层的运行时依赖。
+ */
+function isAccessDenied(error: unknown): boolean {
+  return (error as { apiCode?: string } | null)?.apiCode === 'accessdenied';
+}
+
+/**
+ * 从访问拒绝错误信息中猜测被拒绝的标题
+ *
+ * 萌百的错误信息会内嵌被拒页面的标题（如 `You are not allowed to view Oo大法好.`），
+ * 但信息语言与格式不受控，故仅作为候选：标题列表中出现在错误信息里的标题唯一时才采用，
+ * 且采用后仍会单独请求验证（见 {@link fetchPagesWithDeniedIsolation}）。
+ *
+ * @param titles 本批标题
+ * @param message 访问拒绝错误的信息
+ * @returns 候选标题，无法唯一确定时为 undefined
+ */
+function guessDeniedTitle(titles: string[], message: string): string | undefined {
+  const matched = titles.filter((title) => message.includes(title));
+  return matched.length === 1 ? matched[0] : undefined;
+}
+
+/**
+ * 拉取一批标题的正文，遇到受限页面时定位并跳过
+ *
+ * 敏感页面的读取限制对整批 `titles` 请求生效：响应只含一个 `accessdenied` 错误、不含任何页面数据，
+ * 因此需把该标题从批次中剔除后重试。定位策略：
+ * - 错误信息内嵌标题时，先单独请求该标题验证，命中则其余标题一次拉完（避免二分）
+ * - 无法从错误信息定位时二分标题列表，逐步缩小到单个标题
+ * 单个标题仍被拒绝即认定该页面受限，记入 `deniedTitles` 并跳过（不入库，下次运行会重新确认）。
+ *
+ * @param api 萌百 API 实例
+ * @param titles 本批标题
+ * @param pageMap 累积页面数据的 Map（以标题为键）
+ * @param deniedTitles 受限标题集合，命中的标题追加到其中
+ */
+export async function fetchPagesWithDeniedIsolation(
+  api: MoegirlApi,
+  titles: string[],
+  pageMap: Map<string, PageRecord>,
+  deniedTitles: Set<string>,
+): Promise<void> {
+  if (titles.length === 0) {
+    return;
+  }
+  try {
+    await fetchTitleBatch(api, titles, pageMap);
+  } catch (error) {
+    if (!isAccessDenied(error)) {
+      throw error;
+    }
+    if (titles.length === 1) {
+      deniedTitles.add(titles[0]);
+      return;
+    }
+    const suspect = guessDeniedTitle(titles, (error as Error).message);
+    if (suspect !== undefined) {
+      await fetchPagesWithDeniedIsolation(api, [suspect], pageMap, deniedTitles);
+      await fetchPagesWithDeniedIsolation(api, titles.filter((title) => title !== suspect), pageMap, deniedTitles);
+      return;
+    }
+    const mid = Math.ceil(titles.length / 2);
+    await fetchPagesWithDeniedIsolation(api, titles.slice(0, mid), pageMap, deniedTitles);
+    await fetchPagesWithDeniedIsolation(api, titles.slice(mid), pageMap, deniedTitles);
+  }
+}
+
+/**
  * 按标题批量拉取页面内容与分类并写入 SQLite
  *
- * 用于比对后变更/新增页的内容补拉。复用 {@link mergePages}/{@link flushPages}，
+ * 用于比对后变更/新增页的正文补拉。复用 {@link mergePages}/{@link flushPages}，
  * 跳过 `missing` 页面（由 mergePages 处理）与 `ns` 非 0/10 的页面（避免把移出主/模板空间的页面入库）。
  *
  * @param ctx 依赖上下文
  * @param titles 待拉取标题集合
+ * @returns 被拒绝访问（受限）的标题集合
  */
-async function fetchPagesByTitles(ctx: SyncCtx, titles: Set<string>): Promise<void> {
+async function fetchPagesByTitles(ctx: SyncCtx, titles: Set<string>): Promise<Set<string>> {
   const { api, logger } = ctx;
+  const deniedTitles = new Set<string>();
   if (titles.size === 0) {
-    return;
+    return deniedTitles;
   }
   const titleList = [...titles];
-  /** 单批标题数量（titles 参数上限，bot 可达 500） */
-  const BATCH = 500;
   let count = 0;
-  for (let i = 0; i < titleList.length; i += BATCH) {
-    const batch = titleList.slice(i, i + BATCH);
+  for (let i = 0; i < titleList.length; i += TITLE_BATCH) {
     const pageMap = new Map<string, PageRecord>();
-    let continueParams: Record<string, unknown> = {};
-    do {
-      const response = await api.post({
-        action: 'query',
-        prop: ['revisions', 'categories'],
-        titles: batch,
-        rvprop: ['content', 'ids'],
-        rvslots: 'main',
-        cllimit: 'max',
-        ...continueParams,
-      });
-      mergePages(pageMap, response.query.pages as ApiResponsePage[]);
-      continueParams = response.continue || {};
-    } while (continueParams.clcontinue !== undefined || continueParams.rvcontinue !== undefined);
+    await fetchPagesWithDeniedIsolation(api, titleList.slice(i, i + TITLE_BATCH), pageMap, deniedTitles);
     // 剔除 ns 非 0/10 的页面（移出主/模板空间的目标页不入库）
     for (const [title, page] of pageMap) {
       if (!TRACKED_NAMESPACES.includes(page.ns)) {
@@ -208,36 +306,62 @@ async function fetchPagesByTitles(ctx: SyncCtx, titles: Set<string>): Promise<vo
       }
     }
     count += flushPages(pageMap);
+    if (count > 0 && count % LOG_INTERVAL < TITLE_BATCH) {
+      logger.info(`已补拉${count}个页面`);
+    }
   }
   logger.info(`补拉完毕，共写入${count}个页面`);
+  return deniedTitles;
 }
 
 /**
- * 执行增量同步：拉取 revid 清单 -> 比对 -> 补拉变更页 -> 删除过期页
+ * 将标题列表格式化为日志文本，超出上限时截断
  *
- * 先完整拉取两个命名空间的 revid 清单，再与本地 DB 比对，最后补拉变更页并删除过期页。
+ * @param titles 标题列表
+ * @returns 以`、`分隔的`[[标题]]`列表，超出上限时附总数
+ */
+function formatTitleList(titles: string[]): string {
+  const shown = titles.slice(0, LOG_TITLE_LIMIT).map((title) => `[[${title}]]`).join('、');
+  return titles.length > LOG_TITLE_LIMIT ? `${shown}等${titles.length}个` : shown;
+}
+
+/**
+ * 同步全站页面数据到本地 SQLite
+ *
+ * 先按命名空间拉取标题与元数据清单，再与本地库比对，最后补拉变更/新增页并删除过期页。
+ * 本地库即断点：首次运行等价于全量拉取，中断后下次运行按 revid 比对自动续传（已入库的页面不会重复拉取）。
  * 删除在补拉之后执行，确保中断时不会误删尚未补拉的页面。
  *
  * @param ctx 依赖上下文
  */
-async function syncIncremental(ctx: SyncCtx): Promise<void> {
+async function syncPages(ctx: SyncCtx): Promise<void> {
   const { logger } = ctx;
-  logger.info('开始拉取页面 revid 清单……');
-  const apiRevids = new Map<string, number>();
+  logger.info('开始拉取页面清单……');
+  const apiMeta = new Map<string, PageMeta>();
   for (const ns of TRACKED_NAMESPACES) {
-    const revids = await fetchPageRevids(ctx, ns);
-    for (const [title, revid] of revids) {
-      apiRevids.set(title, revid);
+    const metas = await fetchNamespaceMeta(ctx, ns);
+    for (const [title, meta] of metas) {
+      apiMeta.set(title, meta);
     }
-    logger.info(`命名空间${ns}：${revids.size}个页面`);
+    logger.info(`命名空间${ns}：${metas.size}个页面`);
   }
-  logger.info(`revid 清单拉取完毕，共${apiRevids.size}个页面`);
+  logger.info(`页面清单拉取完毕，共${apiMeta.size}个页面`);
 
   const dbRevids = getPageRevids();
-  const { titlesToFetch, titlesToDelete } = reconcileRevids(apiRevids, dbRevids);
+  const { titlesToFetch, titlesToDelete } = reconcileRevids(apiMeta, dbRevids);
   logger.info(`比对完毕：待补拉${titlesToFetch.size}个、待删除${titlesToDelete.size}个`);
 
-  await fetchPagesByTitles(ctx, titlesToFetch);
+  const deniedTitles = await fetchPagesByTitles(ctx, titlesToFetch);
+  if (deniedTitles.size > 0) {
+    // 受限页面仅覆盖最新 revid、正文保持不变：后续增量比对视为无变化，不再重复请求；
+    // 页面被编辑（revid 变化）或解禁后会重新进入待补拉
+    const records = [...deniedTitles].flatMap((title) => {
+      const meta = apiMeta.get(title);
+      return meta ? [{ title, ...meta }] : [];
+    });
+    upsertPageMetas(records);
+    logger.warn(`跳过${deniedTitles.size}个受限页面：${formatTitleList([...deniedTitles])}`);
+  }
 
   if (titlesToDelete.size > 0) {
     const deleted = deletePages([...titlesToDelete]);
@@ -275,95 +399,9 @@ const messUpdater: TaskHandler = async ({ api, logger, signal }) => {
   // #endregion
 
 
-  // #region 获取页面数据（全量或增量）
-  //
-  // 全量获取耗时长且易因网络中断失败，按命名空间持久化 gapcontinue 断点：
-  // - 存在未完成断点时从断点继续（已完成的命名空间跳过，避免重复拉取）
-  // - 首次运行（无断点且本地无数据）从零开始全量获取
-  // - 本地已有数据且无断点时走增量比对
+  // #region 获取页面数据（首次运行等价于全量，之后按 revid 增量）
 
-  /**
-   * 全量获取指定命名空间的页面并写入 SQLite
-   *
-   * 使用 `generator=allpages` + `prop=revisions|categories`。
-   * 采用父子循环：外层 `gapcontinue` 遍历页面批次，内层 `clcontinue` 累积同一批页面的全部分类。
-   * 当响应中返回 `gapcontinue` 时表示当前批次分类获取完毕，将累积数据写入 SQLite。
-   * 每批写入后保存 gapcontinue 断点，支持中断续传；全部完成后清除断点。
-   *
-   * @param namespace 命名空间编号（0=主空间, 10=模板空间）
-   * @param resumeGapcontinue 断点续传的起始 gapcontinue（可选，未传从零开始）
-   */
-  const fetchAllPagesContent = async (namespace: number, resumeGapcontinue?: string): Promise<void> => {
-    logger.info(`开始全量获取命名空间${namespace}的页面……`);
-    let gapcontinue: string | false = resumeGapcontinue ?? false;
-    let count = 0;
-    do {
-      const pageMap = new Map<string, PageRecord>();
-      let continueParams: Record<string, unknown> = {};
-      let nextGapcontinue: string | false = false;
-      do {
-        const response = await api.post({
-          action: 'query',
-          generator: 'allpages',
-          gapnamespace: namespace,
-          gaplimit: 'max',
-          gapcontinue,
-          prop: ['revisions', 'categories'],
-          rvprop: ['content', 'ids'],
-          rvslots: 'main',
-          cllimit: 'max',
-          ...continueParams,
-        }, { timeout: 45000 });
-        mergePages(pageMap, response.query.pages as ApiResponsePage[]);
-        const cont = response.continue || {};
-        if (cont.gapcontinue) {
-          nextGapcontinue = cont.gapcontinue;
-        }
-        // 保留 prop 级续传参数（rvcontinue/clcontinue）以及 continue 排序标记一并回传，仅剔除 gapcontinue（由外层循环处理）。
-        // continue 标记不可丢弃：revisions 的 rvlimit（500）远小于 gaplimit（5000），一个批次需多次 rvcontinue 才能取完全部源代码；
-        // 缺少该标记时 API 不会续传 revisions，导致除首批外页面源代码丢失。
-        continueParams = {};
-        for (const [key, value] of Object.entries(cont)) {
-          if (key !== 'gapcontinue') {
-            continueParams[key] = value;
-          }
-        }
-      } while (continueParams.rvcontinue !== undefined || continueParams.clcontinue !== undefined);
-      count += flushPages(pageMap);
-      // 写入成功后保存断点，中断后可从此处续传
-      if (nextGapcontinue) {
-        saveProgress(namespace, nextGapcontinue);
-      }
-      if (count % LOG_INTERVAL < 500) {
-        logger.info(`已获取${count}个页面`);
-      }
-      gapcontinue = nextGapcontinue;
-    } while (gapcontinue);
-    // 全量完成，清除该命名空间的断点
-    clearProgress(namespace);
-    logger.info(`命名空间${namespace}全量获取完毕，共${count}个页面`);
-  };
-
-  {
-    const progress = loadProgress();
-    const hasResume = Object.keys(progress).length > 0;
-    if (hasResume) {
-      logger.info('检测到未完成的全量获取，从断点继续');
-    }
-    if (hasResume || getPageCount() === 0) {
-      for (const ns of TRACKED_NAMESPACES) {
-        const resume = progress[String(ns)];
-        // 续传模式下无断点的命名空间视为已完成，跳过避免重复拉取
-        if (hasResume && resume === undefined) {
-          logger.info(`命名空间${ns}已全量获取，跳过`);
-          continue;
-        }
-        await fetchAllPagesContent(ns, resume);
-      }
-    } else {
-      await syncIncremental({ api, logger });
-    }
-  }
+  await syncPages({ api, logger });
 
   // #endregion
 
