@@ -71,6 +71,52 @@ export function upsertPages(pages: PageRecord[]): void {
   }
 }
 
+/** 仅含元数据的页面记录（受限页面专用，不含正文与分类） */
+export interface PageMetaRecord {
+  /** 页面标题 */
+  title: string;
+  /** 页面 ID */
+  pageid: number;
+  /** 命名空间编号 */
+  ns: number;
+  /** 最新修订版本 ID */
+  revid: number;
+}
+
+/**
+ * 批量写入页面元数据（受限页面专用）
+ *
+ * 页面已存在时仅更新 pageid/ns/revid，保留原正文与分类；不存在时插入空正文记录。
+ * 用于受限页面：记录最新 revid 使后续增量比对视为无变化，避免每次运行重复请求失败。
+ *
+ * @param records 页面元数据列表
+ */
+export function upsertPageMetas(records: PageMetaRecord[]): void {
+  if (records.length === 0) {
+    return;
+  }
+  const database = getDb();
+  const stmt = database.prepare(`
+    INSERT INTO pages (title, pageid, ns, revid, text, categories) VALUES (@title, @pageid, @ns, @revid, '', '[]')
+    ON CONFLICT(title) DO UPDATE SET pageid = @pageid, ns = @ns, revid = @revid
+  `);
+  database.exec('BEGIN');
+  try {
+    for (const row of records) {
+      stmt.run({
+        title: row.title,
+        pageid: row.pageid,
+        ns: row.ns,
+        revid: row.revid,
+      });
+    }
+    database.exec('COMMIT');
+  } catch (e) {
+    database.exec('ROLLBACK');
+    throw e;
+  }
+}
+
 /**
  * 批量删除页面（按标题）
  *

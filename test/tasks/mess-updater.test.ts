@@ -6,6 +6,7 @@ vi.mock('../../electron/tasks/mess-updater/page-store', () => ({
   getPageCount: vi.fn(),
   getPageRevids: vi.fn(),
   iteratePages: vi.fn(),
+  upsertPageMetas: vi.fn(),
   upsertPages: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ import { fetchPagesWithDeniedIsolation, mergePages, reconcileRevids, type ApiRes
 import { MessOutput, type PageData } from '../../electron/tasks/mess-updater/output';
 import { checkOrder, createMainChecks, regexPosition } from '../../electron/tasks/mess-updater/checks';
 import type { PageRecord } from '../../electron/tasks/mess-updater/page-store';
+import type { PageMeta } from '../../electron/tasks/mess-updater/index';
 import type { MoegirlApi } from '../../electron/services/moegirl';
 
 
@@ -131,10 +133,13 @@ describe('mergePages', () => {
 
 // #region revids比对
 
-// 测试 reconcileRevids 函数（对比 API 与本地 DB 的 revid，计算待补拉与待删除）
+// 测试 reconcileRevids 函数（对比 API 页面清单与本地 DB 的 revid，计算待补拉与待删除）
 describe('reconcileRevids', () => {
+  /** 构造 API 页面元数据（pageid/ns 与断言无关，固定取 revid 即可） */
+  const meta = (revid: number): PageMeta => ({ pageid: revid, ns: 0, revid });
+
   it('API 有、DB 无 -> 待补拉', () => {
-    const api = new Map([['新页面', 100]]);
+    const api = new Map([['新页面', meta(100)]]);
     const db = new Map<string, number>();
     const result = reconcileRevids(api, db);
     expect(result.titlesToFetch).toEqual(new Set(['新页面']));
@@ -142,7 +147,7 @@ describe('reconcileRevids', () => {
   });
 
   it('API 与 DB 的 revid 不同 -> 待补拉', () => {
-    const api = new Map([['页面A', 200]]);
+    const api = new Map([['页面A', meta(200)]]);
     const db = new Map([['页面A', 100]]);
     const result = reconcileRevids(api, db);
     expect(result.titlesToFetch).toEqual(new Set(['页面A']));
@@ -150,7 +155,7 @@ describe('reconcileRevids', () => {
   });
 
   it('API 与 DB 的 revid 相同 -> 不处理', () => {
-    const api = new Map([['页面B', 300]]);
+    const api = new Map([['页面B', meta(300)]]);
     const db = new Map([['页面B', 300]]);
     const result = reconcileRevids(api, db);
     expect(result.titlesToFetch.size).toBe(0);
@@ -158,7 +163,7 @@ describe('reconcileRevids', () => {
   });
 
   it('DB 有、API 无 -> 待删除', () => {
-    const api = new Map<string, number>();
+    const api = new Map<string, PageMeta>();
     const db = new Map([['过期页面', 400]]);
     const result = reconcileRevids(api, db);
     expect(result.titlesToFetch.size).toBe(0);
@@ -167,9 +172,9 @@ describe('reconcileRevids', () => {
 
   it('混合场景：部分新增、部分变更、部分删除、部分未变', () => {
     const api = new Map([
-      ['新增页', 10],
-      ['变更页', 20],
-      ['未变页', 30],
+      ['新增页', meta(10)],
+      ['变更页', meta(20)],
+      ['未变页', meta(30)],
     ]);
     const db = new Map([
       ['变更页', 25],

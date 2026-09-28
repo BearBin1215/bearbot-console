@@ -1,6 +1,6 @@
 import type { TaskContext, TaskHandler } from '../../services/tasks/types';
 import type { MoegirlApi, RevisionSlots, TitleEntry } from '../../services/moegirl';
-import { deletePages, getPageCount, getPageRevids, iteratePages, upsertPages, type PageRecord } from './page-store';
+import { deletePages, getPageCount, getPageRevids, iteratePages, upsertPageMetas, upsertPages, type PageRecord } from './page-store';
 import { createMainChecks, createTemplateChecks } from './checks';
 import { MESS_DATA, MessOutput } from './output';
 
@@ -98,16 +98,30 @@ function flushPages(pageMap: Map<string, PageRecord>): number {
   return pages.length;
 }
 
-/** API 响应中仅含页面元数据的数据结构（revid 清单拉取用） */
+/** 页面元数据（不含正文，来自 `prop=info` 枚举，用于增量比对与受限页面的版本记录） */
+export interface PageMeta {
+  /** 页面 ID */
+  pageid: number;
+  /** 命名空间编号 */
+  ns: number;
+  /** 最新修订版本 ID */
+  revid: number;
+}
+
+/** API 响应中仅含页面元数据的数据结构（页面清单拉取用） */
 interface ApiInfoPage {
   /** 页面标题 */
   title: string;
+  /** 页面 ID */
+  pageid: number;
+  /** 命名空间编号 */
+  ns: number;
   /** 最新修订版本 ID */
   lastrevid?: number;
 }
 
 /**
- * 拉取指定命名空间的页面标题与最新 revid 清单
+ * 拉取指定命名空间的页面清单（标题与元数据）
  *
  * 使用 `generator=allpages` + `prop=info`，`gaplimit=max` 翻页。`prop=info` 只取页面元数据、
  * 不请求正文，因此不受敏感页面的读取限制影响（这些页面仍在页面列表中），
@@ -115,11 +129,11 @@ interface ApiInfoPage {
  *
  * @param ctx 依赖上下文
  * @param namespace 命名空间编号（0=主空间, 10=模板空间）
- * @returns 标题到最新 revid 的映射
+ * @returns 标题到页面元数据的映射
  */
-async function fetchNamespaceRevids(ctx: SyncCtx, namespace: number): Promise<Map<string, number>> {
+async function fetchNamespaceMeta(ctx: SyncCtx, namespace: number): Promise<Map<string, PageMeta>> {
   const { api } = ctx;
-  const result = new Map<string, number>();
+  const result = new Map<string, PageMeta>();
   let gapcontinue: string | false = false;
   do {
     const response = await api.post({
@@ -132,7 +146,7 @@ async function fetchNamespaceRevids(ctx: SyncCtx, namespace: number): Promise<Ma
     });
     for (const page of response.query.pages as ApiInfoPage[]) {
       if (page.lastrevid !== undefined) {
-        result.set(page.title, page.lastrevid);
+        result.set(page.title, { pageid: page.pageid, ns: page.ns, revid: page.lastrevid });
       }
     }
     gapcontinue = response.continue?.gapcontinue || false;
@@ -141,29 +155,29 @@ async function fetchNamespaceRevids(ctx: SyncCtx, namespace: number): Promise<Ma
 }
 
 /**
- * 对比 API revid 清单与本地 DB，计算待补拉与待删除的标题
+ * 对比 API 页面清单与本地 DB，计算待补拉与待删除的标题
  *
  * - API 有、DB 无或 revid 不同 -> 待补拉（新增或变更）
  * - DB 有、API 无 -> 待删除（被删除或移走）
  *
- * @param apiRevids API 返回的标题到 revid 映射
+ * @param apiMeta API 返回的标题到页面元数据映射
  * @param dbRevids 本地 DB 的标题到 revid 映射
  * @returns 待补拉标题集合与待删除标题集合
  */
-export function reconcileRevids(apiRevids: Map<string, number>, dbRevids: Map<string, number>): {
+export function reconcileRevids(apiMeta: Map<string, PageMeta>, dbRevids: Map<string, number>): {
   titlesToFetch: Set<string>;
   titlesToDelete: Set<string>;
 } {
   const titlesToFetch = new Set<string>();
   const titlesToDelete = new Set<string>();
-  for (const [title, apiRevid] of apiRevids) {
+  for (const [title, meta] of apiMeta) {
     const dbRevid = dbRevids.get(title);
-    if (dbRevid === undefined || dbRevid !== apiRevid) {
+    if (dbRevid === undefined || dbRevid !== meta.revid) {
       titlesToFetch.add(title);
     }
   }
   for (const title of dbRevids.keys()) {
-    if (!apiRevids.has(title)) {
+    if (!apiMeta.has(title)) {
       titlesToDelete.add(title);
     }
   }
@@ -314,7 +328,7 @@ function formatTitleList(titles: string[]): string {
 /**
  * 同步全站页面数据到本地 SQLite
  *
- * 先按命名空间拉取标题与最新 revid 清单，再与本地库比对，最后补拉变更/新增页并删除过期页。
+ * 先按命名空间拉取标题与元数据清单，再与本地库比对，最后补拉变更/新增页并删除过期页。
  * 本地库即断点：首次运行等价于全量拉取，中断后下次运行按 revid 比对自动续传（已入库的页面不会重复拉取）。
  * 删除在补拉之后执行，确保中断时不会误删尚未补拉的页面。
  *
@@ -322,26 +336,31 @@ function formatTitleList(titles: string[]): string {
  */
 async function syncPages(ctx: SyncCtx): Promise<void> {
   const { logger } = ctx;
-  logger.info('开始拉取页面 revid 清单……');
-  const apiRevids = new Map<string, number>();
+  logger.info('开始拉取页面清单……');
+  const apiMeta = new Map<string, PageMeta>();
   for (const ns of TRACKED_NAMESPACES) {
-    const revids = await fetchNamespaceRevids(ctx, ns);
-    for (const [title, revid] of revids) {
-      apiRevids.set(title, revid);
+    const metas = await fetchNamespaceMeta(ctx, ns);
+    for (const [title, meta] of metas) {
+      apiMeta.set(title, meta);
     }
-    logger.info(`命名空间${ns}：${revids.size}个页面`);
+    logger.info(`命名空间${ns}：${metas.size}个页面`);
   }
-  logger.info(`revid 清单拉取完毕，共${apiRevids.size}个页面`);
+  logger.info(`页面清单拉取完毕，共${apiMeta.size}个页面`);
 
   const dbRevids = getPageRevids();
-  const { titlesToFetch, titlesToDelete } = reconcileRevids(apiRevids, dbRevids);
+  const { titlesToFetch, titlesToDelete } = reconcileRevids(apiMeta, dbRevids);
   logger.info(`比对完毕：待补拉${titlesToFetch.size}个、待删除${titlesToDelete.size}个`);
 
   const deniedTitles = await fetchPagesByTitles(ctx, titlesToFetch);
   if (deniedTitles.size > 0) {
-    // 受限页面源码无法读取，移除本地留存的旧版本，避免继续用过期内容做检查
-    deletePages([...deniedTitles]);
-    logger.warn(`跳过${deniedTitles.size}个受限页面（无权读取源代码）：${formatTitleList([...deniedTitles])}`);
+    // 受限页面仅覆盖最新 revid、正文保持不变：后续增量比对视为无变化，不再重复请求；
+    // 页面被编辑（revid 变化）或解禁后会重新进入待补拉
+    const records = [...deniedTitles].flatMap((title) => {
+      const meta = apiMeta.get(title);
+      return meta ? [{ title, ...meta }] : [];
+    });
+    upsertPageMetas(records);
+    logger.warn(`跳过${deniedTitles.size}个受限页面：${formatTitleList([...deniedTitles])}`);
   }
 
   if (titlesToDelete.size > 0) {
