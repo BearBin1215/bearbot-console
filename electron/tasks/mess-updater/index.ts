@@ -1,5 +1,6 @@
+import type { ApiPageIdentity, ApiQueryResponse, InfoPageExisting, QueryPage } from 'types-mediawiki-response';
 import type { TaskContext, TaskHandler } from '../../services/tasks/types';
-import type { MoegirlApi, RevisionSlots, TitleEntry } from '../../services/moegirl';
+import type { MoegirlApi } from '../../services/moegirl';
 import { deletePages, getPageCount, getPageRevids, iteratePages, upsertPageMetas, upsertPages, type PageRecord } from './page-store';
 import { createMainChecks, createTemplateChecks } from './checks';
 import { MESS_DATA, MessOutput } from './output';
@@ -19,21 +20,15 @@ const TITLE_BATCH = 500;
 /** 单条日志中列出的标题数量上限（超出部分仅显示数量） */
 const LOG_TITLE_LIMIT = 20;
 
-/** API 响应中的页面数据结构 */
-export interface ApiResponsePage {
-  /** 页面标题 */
-  title: string;
-  /** 页面 ID */
-  pageid: number;
-  /** 命名空间编号 */
-  ns: number;
-  /** 修订信息（含页面源代码和修订版本 ID） */
-  revisions?: Array<RevisionSlots & { revid: number }>;
-  /** 所属分类列表 */
-  categories?: Array<TitleEntry>;
-  /** 页面是否存在（缺失时为 true） */
-  missing?: boolean;
-}
+/**
+ * API 响应中的页面数据结构（`prop=revisions|categories` 查询结果）
+ *
+ * `titles=` 查询必定返回身份字段，故这三项取必需；`revisions` / `categories`
+ * 受 `rvlimit` / `cllimit` 分页影响可能缺席，保持可选。
+ */
+export type ApiResponsePage =
+  QueryPage<'revisions' | 'categories'>
+  & Required<Pick<ApiPageIdentity, 'title' | 'pageid' | 'ns'>>;
 
 /** 页面同步所需的依赖上下文（便于脱离 TaskContext 单独测试） */
 interface SyncCtx {
@@ -64,9 +59,12 @@ export function mergePages(pageMap: Map<string, PageRecord>, responsePages: ApiR
     if (existing) {
       // rvcontinue 续传响应会补回首次响应因 rvlimit 未含的 revisions，需更新正文与 revid；
       // clcontinue 续传响应只含分类、不含 revisions，此时沿用已有正文
-      if (page.revisions?.[0]?.slots?.main?.content) {
-        existing.text = page.revisions[0].slots.main.content.replace(/<!--[\s\S]*?-->/g, '');
-        existing.revid = page.revisions[0].revid;
+      const revision = page.revisions?.[0];
+      const content = revision?.slots?.main?.content;
+      // 正文为空串（空页面）时按未返回处理，沿用已有正文与 revid
+      if (content && revision?.revid !== undefined) {
+        existing.text = content.replace(/<!--[\s\S]*?-->/g, '');
+        existing.revid = revision.revid;
       }
       existing.categories.push(...categories);
     } else {
@@ -108,18 +106,6 @@ export interface PageMeta {
   revid: number;
 }
 
-/** API 响应中仅含页面元数据的数据结构（页面清单拉取用） */
-interface ApiInfoPage {
-  /** 页面标题 */
-  title: string;
-  /** 页面 ID */
-  pageid: number;
-  /** 命名空间编号 */
-  ns: number;
-  /** 最新修订版本 ID */
-  lastrevid?: number;
-}
-
 /**
  * 拉取指定命名空间的页面清单（标题与元数据）
  *
@@ -136,7 +122,7 @@ async function fetchNamespaceMeta(ctx: SyncCtx, namespace: number): Promise<Map<
   const result = new Map<string, PageMeta>();
   let gapcontinue: string | false = false;
   do {
-    const response = await api.post({
+    const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
       action: 'query',
       generator: 'allpages',
       gapnamespace: namespace,
@@ -144,10 +130,8 @@ async function fetchNamespaceMeta(ctx: SyncCtx, namespace: number): Promise<Map<
       gapcontinue,
       prop: 'info',
     });
-    for (const page of response.query.pages as ApiInfoPage[]) {
-      if (page.lastrevid !== undefined) {
-        result.set(page.title, { pageid: page.pageid, ns: page.ns, revid: page.lastrevid });
-      }
+    for (const page of (response.query.pages ?? []) as InfoPageExisting[]) {
+      result.set(page.title, { pageid: page.pageid, ns: page.ns, revid: page.lastrevid });
     }
     gapcontinue = response.continue?.gapcontinue || false;
   } while (gapcontinue);
@@ -194,7 +178,7 @@ export function reconcileRevids(apiMeta: Map<string, PageMeta>, dbRevids: Map<st
 async function fetchTitleBatch(api: MoegirlApi, titles: string[], pageMap: Map<string, PageRecord>): Promise<void> {
   let continueParams: Record<string, unknown> = {};
   do {
-    const response = await api.post({
+    const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
       action: 'query',
       prop: ['revisions', 'categories'],
       titles,
@@ -203,7 +187,7 @@ async function fetchTitleBatch(api: MoegirlApi, titles: string[], pageMap: Map<s
       cllimit: 'max',
       ...continueParams,
     });
-    mergePages(pageMap, response.query.pages as ApiResponsePage[]);
+    mergePages(pageMap, (response.query.pages ?? []) as ApiResponsePage[]);
     continueParams = response.continue || {};
   } while (continueParams.clcontinue !== undefined || continueParams.rvcontinue !== undefined);
 }
@@ -451,7 +435,7 @@ const messUpdater: TaskHandler = async ({ api, logger, signal }) => {
   const fetchVariantTitles = async (namespace: number): Promise<void> => {
     let gapcontinue: string | false = false;
     do {
-      const response = await api.post({
+      const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
         action: 'query',
         prop: 'info',
         generator: 'allpages',
@@ -462,10 +446,7 @@ const messUpdater: TaskHandler = async ({ api, logger, signal }) => {
         gapcontinue,
       });
       gapcontinue = response.continue?.gapcontinue || false;
-      for (const page of response.query.pages as Array<{
-        title: string;
-        varianttitles?: Record<string, string>;
-      }>) {
+      for (const page of (response.query.pages ?? []) as InfoPageExisting[]) {
         const titleCN = page.varianttitles?.['zh-cn'];
         if (
           titleCN &&

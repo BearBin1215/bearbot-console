@@ -1,12 +1,8 @@
+import type { ApiQueryResponse, QueryPageExisting } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
-import type { TitleEntry } from '../services/moegirl';
 
-interface PageEntry {
-  title: string;
-  ns?: number;
-  redirects?: TitleEntry[];
-  links?: TitleEntry[];
-}
+/** 分类成员页面（生成器只产出已存在的页面，身份字段齐全） */
+type PageEntry = QueryPageExisting<'links' | 'redirects'>;
 
 /**
  * 更新[[萌娘百科:链接到消歧义页面的导航模板]]
@@ -26,7 +22,7 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
     let gcmcontinue: string | false = false;
     logger.info('开始获取消歧义页列表……');
     do {
-      const catMembers = await api.post({
+      const catMembers: ApiQueryResponse = await api.post<ApiQueryResponse>({
         action: 'query',
         generator: 'categorymembers',
         prop: 'redirects',
@@ -36,10 +32,12 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
         gcmcontinue,
       });
       gcmcontinue = catMembers.continue?.gcmcontinue || false;
-      for (const item of (catMembers.query.pages as PageEntry[])) {
+      for (const item of (catMembers.query.pages ?? []) as PageEntry[]) {
         disambigs.add(item.title);
-        for (const rd of item.redirects || []) {
-          disambigs.add(rd.title);
+        for (const rd of item.redirects ?? []) {
+          if (rd.title) {
+            disambigs.add(rd.title);
+          }
         }
       }
     } while (gcmcontinue);
@@ -97,13 +95,13 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
     };
     let continueParams: Record<string, unknown> = {};
     do {
-      const response = await api.post({ ...baseParams, ...continueParams });
-      for (const page of (response.query?.pages as PageEntry[] | undefined) ?? []) {
+      const response: ApiQueryResponse = await api.post<ApiQueryResponse>({ ...baseParams, ...continueParams });
+      for (const page of (response.query.pages ?? []) as PageEntry[]) {
         if (page.ns === 14) {
           subcats.push(page.title);
         } else {
           const { title } = page;
-          const pageLinks = (page.links || []).map((l) => l.title);
+          const pageLinks = (page.links ?? []).map((l) => l.title);
           if (collectingInThisCategory.has(title)) {
             // 本分类内正在收集：累加链接分页的剩余链接
             linksInTemplates[title].push(...pageLinks);

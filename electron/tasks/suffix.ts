@@ -1,3 +1,4 @@
+import type { ApiQueryResponse } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
 /** 不视为多余后缀的标题前缀白名单 */
@@ -9,14 +10,6 @@ const WHITE_LIST = [
   'L！L！L！',
   '碧蓝航线/图鉴/',
 ];
-
-/** `allredirects` 返回的重定向数据 */
-interface RedirectData {
-  /** 重定向页面 */
-  from: string;
-  /** 目标页面 */
-  to: string;
-}
 
 /**
  * 更新[[萌娘百科:疑似多余消歧义后缀]]
@@ -57,7 +50,7 @@ const suffix: TaskHandler = async ({ api, logger }) => {
   let garcontinue: string | boolean = false;
   logger.info('开始获取重定向页面');
   do {
-    const allRedirects = await api.post({
+    const allRedirects: ApiQueryResponse = await api.post<ApiQueryResponse>({
       action: 'query',
       generator: 'allredirects',
       redirects: true,
@@ -66,14 +59,17 @@ const suffix: TaskHandler = async ({ api, logger }) => {
       garcontinue,
     });
     garcontinue = allRedirects.continue?.garcontinue || false;
-    for (const item of (allRedirects.query.redirects as RedirectData[])) {
+    for (const { from, to } of allRedirects.query.redirects ?? []) {
+      if (!from || !to) {
+        continue;
+      }
       // 后缀重定向至无后缀
-      if (item.from.replace(/^(.*)\(.*\)$/, '$1') === item.to) {
-        suffix2Origin.push(`* [{{canonicalurl:${item.from}|redirect=no}} ${item.from}]→[[${item.to}]]`);
+      if (from.replace(/^(.*)\(.*\)$/, '$1') === to) {
+        suffix2Origin.push(`* [{{canonicalurl:${from}|redirect=no}} ${from}]→[[${to}]]`);
       }
       // 无后缀重定向至后缀
-      if (item.from === item.to.replace(/^(.*)\(.*\)$/, '$1')) {
-        origin2Suffix.push(`* [{{canonicalurl:${item.from}|redirect=no}} ${item.from}]→[[${item.to}]]`);
+      if (from === to.replace(/^(.*)\(.*\)$/, '$1')) {
+        origin2Suffix.push(`* [{{canonicalurl:${from}|redirect=no}} ${from}]→[[${to}]]`);
       }
     }
   } while (garcontinue);

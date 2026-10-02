@@ -1,10 +1,5 @@
+import type { ApiQueryResponse, QueryPageExisting } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
-import type { TitleEntry } from '../services/moegirl';
-
-interface PageWithRedirects {
-  title: string;
-  redirects?: TitleEntry[];
-}
 
 /** 专题内互相消歧义：全组条目均包含同一关键词时排除 */
 const INTRA_TOPIC_KEYWORDS = [
@@ -53,7 +48,7 @@ const requiredDisambig: TaskHandler = async ({ api, logger }) => {
   let gcmcontinue: string | false = false;
   logger.info('开始获取消歧义页列表……');
   do {
-    const catMembers = await api.post({
+    const catMembers: ApiQueryResponse = await api.post<ApiQueryResponse>({
       action: 'query',
       generator: 'categorymembers',
       prop: 'redirects',
@@ -63,10 +58,12 @@ const requiredDisambig: TaskHandler = async ({ api, logger }) => {
       gcmcontinue,
     });
     gcmcontinue = catMembers.continue?.gcmcontinue || false;
-    for (const item of (catMembers.query.pages as PageWithRedirects[])) {
+    for (const item of (catMembers.query.pages ?? []) as QueryPageExisting<'redirects'>[]) {
       disambigList.add(item.title.replace('(消歧义页)', ''));
-      for (const rd of item.redirects || []) {
-        disambigList.add(rd.title);
+      for (const rd of item.redirects ?? []) {
+        if (rd.title) {
+          disambigList.add(rd.title);
+        }
       }
     }
   } while (gcmcontinue);

@@ -18,6 +18,7 @@
 import { session, type Session } from 'electron';
 import { randomUUID } from 'node:crypto';
 import type { Account, AccountRecord, UserInfo } from '@shared/types';
+import type { ApiClientLoginResponse, ApiQueryResponse, ApiUser } from 'types-mediawiki-response';
 import {
   getAllAccounts,
   setAllAccounts,
@@ -53,6 +54,18 @@ interface LoginStatus {
   userId: string;
   /** 用户名 */
   username: string;
+}
+
+/**
+ * 萌百 `list=users` 在标准字段之外额外返回的显示昵称与显示标签
+ *
+ * 由萌百的 moedisplayname 扩展提供，不属于 MediaWiki 标准的 `usprop`，故在标准类型上追加声明。
+ */
+interface MoegirlUser extends ApiUser {
+  /** 显示昵称，未设置时为 null */
+  displayname?: string | null;
+  /** 显示标签（昵称后缀），未设置时为 null */
+  displaytag?: string | null;
 }
 
 // #region 内部工具
@@ -100,7 +113,8 @@ async function login(api: MoegirlApi, username: string, password: string): Promi
   const { moegirlDomain } = getAllSettings();
 
   const logintoken = await api.getToken('login');
-  const data = await api.post({
+  // 请求被拒时 MoegirlApi 会抛出 MoegirlRequestError（含 error.info），此处只会拿到成功载荷
+  const data = await api.post<ApiClientLoginResponse>({
     action: 'clientlogin',
     logintoken,
     loginreturnurl: `https://${moegirlDomain}/api.php`,
@@ -109,7 +123,7 @@ async function login(api: MoegirlApi, username: string, password: string): Promi
     rememberMe: '1',
   });
 
-  const clientlogin = data?.clientlogin;
+  const clientlogin = data.clientlogin;
   if (clientlogin?.status === 'PASS') {
     return clientlogin.username || username;
   }
@@ -117,8 +131,6 @@ async function login(api: MoegirlApi, username: string, password: string): Promi
   let errorMessage = '登录失败';
   if (typeof clientlogin?.message === 'string' && clientlogin.message) {
     errorMessage = clientlogin.message;
-  } else if (typeof data?.error?.info === 'string' && data.error.info) {
-    errorMessage = data.error.info;
   } else if (typeof clientlogin?.status === 'string') {
     errorMessage = `登录失败（状态：${clientlogin.status}）`;
   }
@@ -144,13 +156,13 @@ async function fetchUserInfo(api: MoegirlApi): Promise<UserInfo> {
   if (!status) {
     throw new Error('未登录，无法获取用户信息');
   }
-  const res = await api.get({
+  const res = await api.get<ApiQueryResponse>({
     action: 'query',
     list: 'users',
     usprop: ['groups', 'rights'],
     ususerids: status.userId,
   });
-  const user = res?.query?.users?.[0];
+  const user = res.query.users?.[0] as MoegirlUser | undefined;
   return {
     groups: user?.groups || [],
     rights: user?.rights || [],

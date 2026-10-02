@@ -29,7 +29,7 @@ describe('mergePages', () => {
       pageid: 123,
       ns: 0,
       revisions: [{ revid: 100, slots: { main: { content: '页面内容' } } }],
-      categories: [{ title: 'Category:沙盒' }],
+      categories: [{ ns: 14, title: 'Category:沙盒' }],
     }];
     mergePages(pageMap, pages);
     expect(pageMap.get('沙盒')).toEqual({
@@ -75,7 +75,7 @@ describe('mergePages', () => {
       pageid: 1,
       ns: 0,
       revisions: [{ revid: 200, slots: { main: { content: '完整正文' } } }],
-      categories: [{ title: 'Category:新增' }],
+      categories: [{ ns: 14, title: 'Category:新增' }],
     }];
     mergePages(pageMap, pages);
     const page = pageMap.get('沙盒A')!;
@@ -99,7 +99,7 @@ describe('mergePages', () => {
       title: '沙盒B',
       pageid: 2,
       ns: 0,
-      categories: [{ title: 'Category:B' }, { title: 'Category:C' }],
+      categories: [{ ns: 14, title: 'Category:B' }, { ns: 14, title: 'Category:C' }],
     }];
     mergePages(pageMap, pages);
     const page = pageMap.get('沙盒B')!;

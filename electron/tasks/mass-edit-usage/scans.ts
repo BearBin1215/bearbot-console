@@ -16,6 +16,7 @@
  * `ucprop` 只取 `timestamp` 与 `comment`——加上 `tags` 会为每一行附加相关子查询，
  * 而标签只用于过滤，对结果没有影响。
  */
+import type { ApiQueryResponse, ApiRecentChange, ApiUserContrib } from 'types-mediawiki-response';
 import type { MoegirlApi } from '../../services/moegirl';
 import type { TaskLogger } from '../../services/tasks/types';
 import { closeWindow } from './progress';
@@ -29,22 +30,6 @@ import { toMonthKey } from './time';
  * 固定批数会让日志节奏难以预期。
  */
 const LOG_INTERVAL_MS = 5 * 60 * 1000;
-
-/** `list=allusers` 返回的用户（仅声明本任务使用的字段） */
-interface AllUsersEntry {
-  /** 用户名 */
-  name: string;
-}
-
-/** `list=usercontribs` 与 `list=recentchanges` 返回记录中本任务使用的字段 */
-interface EditRecord {
-  /** 编辑者用户名，匿名编辑为 IP */
-  user: string;
-  /** 编辑摘要；被修订删除时为 `commenthidden` */
-  comment?: string;
-  /** 编辑时间（ISO 8601，UTC） */
-  timestamp?: string;
-}
 
 /**
  * 把一批计数并入累计值
@@ -68,11 +53,11 @@ function mergeCounts(target: Record<string, number>, source: Record<string, numb
  * @returns 是否命中
  */
 function countIfMassEdit(
-  record: EditRecord,
+  record: ApiUserContrib | ApiRecentChange,
   usage: Record<string, number>,
   monthly: Record<string, number>,
 ): boolean {
-  if (!record.comment?.includes('MassEdit')) {
+  if (!record.user || !record.comment?.includes('MassEdit')) {
     return false;
   }
   usage[record.user] = (usage[record.user] ?? 0) + 1;
@@ -101,7 +86,7 @@ async function takeNextBatch(
   if (progress.enumDone) {
     return false;
   }
-  const response = await api.post({
+  const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
     action: 'query',
     list: 'allusers',
     // 只枚举至少有过一次编辑的用户，跳过大量从未编辑的注册账号
@@ -109,7 +94,7 @@ async function takeNextBatch(
     aulimit: batchSize,
     aufrom: progress.userCursor ?? false,
   });
-  progress.batch = ((response.query?.allusers ?? []) as AllUsersEntry[]).map((item) => item.name);
+  progress.batch = (response.query.allusers ?? []).map((item) => item.name);
   progress.userCursor = response.continue?.aufrom ?? null;
   progress.enumDone = !response.continue;
   return progress.batch.length > 0;
@@ -171,7 +156,7 @@ export async function scanByUserContribs(
 
     do {
       signal.throwIfAborted();
-      const response = await api.post({
+      const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
         action: 'query',
         list: 'usercontribs',
         ucuser: progress.batch,
@@ -183,7 +168,7 @@ export async function scanByUserContribs(
         ucprop: ['timestamp', 'comment'],
         uccontinue: cursor ?? false,
       });
-      for (const record of (response.query?.usercontribs ?? []) as EditRecord[]) {
+      for (const record of response.query.usercontribs ?? []) {
         scanned += 1;
         if (countIfMassEdit(record, batchUsage, batchMonthly)) {
           matched += 1;
@@ -244,7 +229,7 @@ export async function scanByRecentChanges(
 
   do {
     signal.throwIfAborted();
-    const response = await api.post({
+    const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
       action: 'query',
       list: 'recentchanges',
       // 只统计数据型变更，排除日志类记录
@@ -256,7 +241,7 @@ export async function scanByRecentChanges(
       rclimit: 'max',
       rccontinue: rccontinue ?? false,
     });
-    for (const record of (response.query?.recentchanges ?? []) as EditRecord[]) {
+    for (const record of response.query.recentchanges ?? []) {
       scanned += 1;
       if (countIfMassEdit(record, changes, monthly)) {
         matched += 1;

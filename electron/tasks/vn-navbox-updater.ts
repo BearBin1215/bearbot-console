@@ -1,4 +1,5 @@
 import { chunk, groupBy } from 'es-toolkit';
+import type { ApiQueryResponse } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
 /** 维护组对应的 MediaWiki 用户组 */
@@ -67,14 +68,14 @@ const vnNavboxUpdater: TaskHandler = async ({ api, logger, user }) => {
   const getUserGroups = async (userList: string[], batchSize: number): Promise<Record<string, string[]>> => {
     const result: Record<string, string[]> = {};
     for (const batch of chunk(userList, batchSize)) {
-      const { query: { users } } = await api.post({
+      const { query } = await api.post<ApiQueryResponse>({
         action: 'query',
         list: 'users',
         ususers: batch,
         usprop: 'groups',
       });
-      for (const { name, groups } of users) {
-        if (groups) {
+      for (const { name, groups } of query.users ?? []) {
+        if (name && groups) {
           result[name] = groups;
         }
       }

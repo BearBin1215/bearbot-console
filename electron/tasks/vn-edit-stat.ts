@@ -1,14 +1,9 @@
 import { chunk, uniqBy } from 'es-toolkit';
+import type { ApiQueryResponse } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
 /** 翻页请求间的等待时间（毫秒），避免请求过于密集 */
 const REQUEST_INTERVAL = 500;
-
-/** API 响应的用户贡献数据 */
-interface UserContrib {
-  userid: number;
-  user: string;
-}
 
 /** 将用户名规范化为 MW 标准格式（首字母大写、下划线转空格），用于统一请求与响应中的用户名匹配 */
 function normalizeUsername(username: string): string {
@@ -71,9 +66,8 @@ const vnEditStat: TaskHandler = async ({ api, logger, user, sleep, params }) => 
       };
       let uccontinue: string | false = false;
       do {
-        const request = { ...baseParams, uccontinue };
-        const response = await api.post(request);
-        for (const contrib of (response.query?.usercontribs as UserContrib[] | undefined) ?? []) {
+        const response: ApiQueryResponse = await api.post<ApiQueryResponse>({ ...baseParams, uccontinue });
+        for (const contrib of response.query.usercontribs ?? []) {
           const username = normalizeUsername(contrib.user);
           counts[username] = (counts[username] ?? 0) + 1;
         }
