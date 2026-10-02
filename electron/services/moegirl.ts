@@ -17,6 +17,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { Session } from 'electron';
 import { getAllSettings } from './store';
 import type { TaskLogger } from './tasks/types';
+import type {
+  ApiEditResponse,
+  ApiQueryResponse,
+  QueryPage,
+} from 'types-mediawiki-response';
 
 /** token 类型 */
 type TokenType = 'createaccount' | 'csrf' | 'login' | 'patrol' | 'rollback' | 'userrights' | 'watch';
@@ -108,27 +113,6 @@ export interface TitleEntry {
   title: string;
 }
 
-/**
- * revisions 元素的正文槽结构
- *
- * 对应 MediaWiki `rvprop=content` + `rvslots=main` 的固定返回，正文必定落在`revisions[0].slots.main.content`。
- * 仅描述正文槽子树，不含 `revid`/`user` 等随 `rvprop` 变化的字段；
- * 任务层需要 revid 时按 `RevisionSlots & { revid: number }` 组合。
- */
-export interface RevisionSlots {
-  slots: {
-    /** 主槽正文 */
-    main: { content: string };
-  };
-}
-
-/** revisions 查询返回的页面数据 */
-interface PageWithRevisions {
-  title: string;
-  revisions?: RevisionSlots[];
-  missing?: boolean;
-}
-
 
 // #region 错误处理
 
@@ -213,13 +197,13 @@ export class MoegirlApi {
   }
 
   /** 发起 GET 请求 */
-  get(params: ApiParams, options?: RequestOptions) {
-    return this.request('GET', params, options);
+  get<T = Record<string, any>>(params: ApiParams, options?: RequestOptions): Promise<T> {
+    return this.request<T>('GET', params, options);
   }
 
   /** 发起 POST 请求 */
-  post(params: ApiParams, options?: RequestOptions) {
-    return this.request('POST', params, options);
+  post<T = Record<string, any>>(params: ApiParams, options?: RequestOptions): Promise<T> {
+    return this.request<T>('POST', params, options);
   }
 
   /**
@@ -227,21 +211,23 @@ export class MoegirlApi {
    * @param title 页面标题
    */
   async getPageSource(title: string): Promise<string> {
-    const res = await this.post({
+    const res = await this.post<ApiQueryResponse>({
       action: 'query',
       prop: 'revisions',
       titles: title,
       rvprop: 'content',
       rvslots: 'main',
     });
-    const [pageData] = res.query.pages as PageWithRevisions[];
+    const [pageData] = (res.query.pages ?? []) as QueryPage<'revisions'>[];
     if (pageData?.missing) {
       throw new Error(`页面[[${title}]]不存在`);
     }
-    if (!pageData?.revisions?.[0]) {
+    // 正文可能被修订删除或未返回，content 为可选，取不到时视为失败
+    const content = pageData?.revisions?.[0]?.slots?.main?.content;
+    if (content === undefined) {
       throw new Error(`获取页面[[${title}]]源代码失败`);
     }
-    return pageData.revisions[0].slots.main.content;
+    return content;
   }
 
   /**
@@ -261,7 +247,7 @@ export class MoegirlApi {
     const members: T[] = [];
     let cmcontinue: string | false = false;
     do {
-      const response = await this.post({
+      const response: ApiQueryResponse = await this.post<ApiQueryResponse>({
         ...extraParams,
         action: 'query',
         list: 'categorymembers',
@@ -270,7 +256,7 @@ export class MoegirlApi {
         cmcontinue,
       });
       cmcontinue = response.continue?.cmcontinue || false;
-      members.push(...response.query.categorymembers as T[]);
+      members.push(...(response.query.categorymembers ?? []) as unknown as T[]);
     } while (cmcontinue);
     return members;
   }
@@ -284,7 +270,7 @@ export class MoegirlApi {
     const pageList = new Set<string>();
     let apcontinue: string | false = false;
     do {
-      const allPages = await this.post({
+      const allPages: ApiQueryResponse = await this.post<ApiQueryResponse>({
         action: 'query',
         list: 'allpages',
         aplimit: 'max',
@@ -292,7 +278,7 @@ export class MoegirlApi {
         ...extraParams,
       });
       apcontinue = allPages.continue?.apcontinue || false;
-      for (const page of allPages.query.allpages) {
+      for (const page of allPages.query.allpages ?? []) {
         pageList.add(page.title);
       }
     } while (apcontinue);
@@ -306,12 +292,12 @@ export class MoegirlApi {
       return cached;
     }
     try {
-      const data = await this.get({
+      const data = await this.get<ApiQueryResponse>({
         action: 'query',
         meta: 'tokens',
         type: tokenType,
       });
-      const token = data?.query?.tokens?.[`${tokenType}token`];
+      const token = data.query.tokens?.[`${tokenType}token`];
       if (!token) {
         throw new Error(`获取 ${tokenType} Token 失败`);
       }
@@ -324,17 +310,21 @@ export class MoegirlApi {
   }
 
   /** 携带 token 发起 POST 请求 */
-  async postWithToken(tokenType: TokenType, params: ApiParams, options?: RequestOptions): Promise<Record<string, any>> {
+  async postWithToken<T = Record<string, any>>(
+    tokenType: TokenType,
+    params: ApiParams,
+    options?: RequestOptions,
+  ): Promise<T> {
     let token = await this.getToken(tokenType);
     try {
-      return await this.post({ ...params, token }, options);
+      return await this.post<T>({ ...params, token }, options);
     } catch (error) {
       const msg = (error as Error).message ?? '';
       // 自动处理 badtoken 刷新
       if (msg.includes('badtoken')) {
         this.tokens.delete(tokenType);
         token = await this.getToken(tokenType);
-        return this.post({ ...params, token }, options);
+        return this.post<T>({ ...params, token }, options);
       }
       throw error;
     }
@@ -356,7 +346,7 @@ export class MoegirlApi {
   ): Promise<void> {
     const logger = loggerStorage.getStore();
     logger?.info(`正在保存到[[${title}]]`);
-    const res = await this.postWithToken('csrf', {
+    const res = await this.postWithToken<ApiEditResponse>('csrf', {
       action: 'edit',
       title,
       text,
@@ -365,10 +355,10 @@ export class MoegirlApi {
       tags: 'Bot',
     }, options);
     // 校验编辑结果：MediaWiki 在拦截/权限不足时返回 result: "Failure" 但不通过 error 字段抛错
-    if (res.edit?.result !== 'Success') {
-      throw new Error(`编辑[[${title}]]失败：${res.edit?.result ?? '未知结果'}`);
+    if (res.edit.result !== 'Success') {
+      throw new Error(`编辑[[${title}]]失败：${res.edit.result ?? '未知结果'}`);
     }
-    if (res.edit?.nochange) {
+    if (res.edit.nochange) {
       logger?.info('页面无变化');
     } else {
       logger?.info('保存成功');
@@ -398,11 +388,11 @@ export class MoegirlApi {
    * - 错误解析
    * - 失败时抛出 {@link MoegirlRequestError}
    */
-  private async request(
+  private async request<T = Record<string, any>>(
     method: 'GET' | 'POST',
     params: ApiParams,
     options?: RequestOptions,
-  ): Promise<Record<string, any>> {
+  ): Promise<T> {
     const { retryCount, retryInterval, requestTimeout, userAgent } = getAllSettings();
     /** 最大重试次数 */
     const retries = options?.retries ?? retryCount;
@@ -482,7 +472,7 @@ export class MoegirlApi {
           lastResponseBody = body;
           throw new Error(data.error.info || data.error.code);
         }
-        return data;
+        return data as T;
       } catch (error) {
         lastError = error as Error;
         // 任务被手动停止时不再重试，直接结束
