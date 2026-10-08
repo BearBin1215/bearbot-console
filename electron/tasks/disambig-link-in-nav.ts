@@ -1,3 +1,4 @@
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiQueryResponse, QueryPageExisting } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
@@ -29,8 +30,8 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
         gcmlimit: 'max',
         rdlimit: 'max',
         gcmtitle: 'Category:消歧义页',
-        gcmcontinue,
-      });
+        ...(gcmcontinue ? { gcmcontinue } : {}),
+      } satisfies QueryRequest<'redirects', 'categorymembers', never, 'categorymembers'>);
       gcmcontinue = catMembers.continue?.gcmcontinue || false;
       for (const item of (catMembers.query.pages ?? []) as PageEntry[]) {
         disambigs.add(item.title);
@@ -90,9 +91,9 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
       gcmlimit: 'max',
       gcmtitle: category,
       gcmprop: 'title',
-      gcmnamespace: '10|14',
-      gcmtype: 'page|subcat',
-    };
+      gcmnamespace: [10, 14],
+      gcmtype: ['page', 'subcat'],
+    } satisfies QueryRequest<'links', 'categorymembers', never, 'categorymembers'>;
     let continueParams: Record<string, unknown> = {};
     do {
       const response: ApiQueryResponse = await api.post<ApiQueryResponse>({ ...baseParams, ...continueParams });

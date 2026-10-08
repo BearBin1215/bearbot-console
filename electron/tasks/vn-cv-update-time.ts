@@ -1,4 +1,5 @@
 import { chunk } from 'es-toolkit';
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiQueryResponse, QueryPage } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
@@ -91,7 +92,7 @@ const vnCvUpdateTime: TaskHandler = async ({ api, logger, user }) => {
       prop: 'revisions',
       titles: titleChunk,
       rvprop: 'timestamp',
-    });
+    } satisfies QueryRequest<'revisions'>);
     for (const page of (response.query.pages ?? []) as QueryPage<'revisions'>[]) {
       const timestamp = page.revisions?.[0]?.timestamp;
       if (page.title && timestamp) {

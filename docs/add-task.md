@@ -202,11 +202,11 @@ const filteredMembers = await api.fetchCategoryMembers<{ title: string; type: st
 
 第二个参数用于传入 `cmnamespace`、`cmtype`、`cmprop`、`cmsort` 等 `list=categorymembers` 参数，
 类型为 [types-mediawiki-params](https://github.com/BearBin1215/types-mediawiki-params) 的 `ApiQueryCategorymembersParams`，
-已剔除 `cmtitle`、`cmpageid`、`cmlimit`、`cmcontinue` 等由方法统一控制的字段；参数名与取值会在编译期校验，多值参数须用数组。
+`cmtitle`、`cmpageid`、`cmlimit`、`cmcontinue` 等字段由方法统一控制；参数名与取值会在编译期校验，多值参数须用数组。
 
 #### `fetchAllPages`
 
-获取全站页面标题列表（Set），支持传入额外查询参数（类型 `ApiQueryAllpagesParams`，已剔除 `aplimit` 与 `apcontinue`）：
+获取全站页面标题列表（Set），支持传入额外查询参数（类型 `ApiQueryAllpagesParams`，`aplimit` 与 `apcontinue` 由方法统一控制）：
 
 ```typescript
 const allPages: Set<string> = await api.fetchAllPages();

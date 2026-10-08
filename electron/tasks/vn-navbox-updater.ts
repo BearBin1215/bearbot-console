@@ -1,4 +1,5 @@
 import { chunk, groupBy } from 'es-toolkit';
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiQueryResponse } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
@@ -73,7 +74,7 @@ const vnNavboxUpdater: TaskHandler = async ({ api, logger, user }) => {
         list: 'users',
         ususers: batch,
         usprop: 'groups',
-      });
+      } satisfies QueryRequest<never, 'users'>);
       for (const { name, groups } of query.users ?? []) {
         if (name && groups) {
           result[name] = groups;

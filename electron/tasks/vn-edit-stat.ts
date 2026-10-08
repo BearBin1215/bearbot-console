@@ -1,4 +1,5 @@
 import { chunk, uniqBy } from 'es-toolkit';
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiQueryResponse } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
@@ -61,12 +62,16 @@ const vnEditStat: TaskHandler = async ({ api, logger, user, sleep, params }) => 
         ucdir: 'older',
         ucend,
         ucuser: batch,
-        ucnamespace: ['0', '10', '14', '828'], // 统计范围：主、模板、分类、模块
-        ucprop: '',
-      };
+        ucnamespace: [0, 10, 14, 828], // 统计范围：主、模板、分类、模块
+      } satisfies QueryRequest<never, 'usercontribs'>;
       let uccontinue: string | false = false;
       do {
-        const response: ApiQueryResponse = await api.post<ApiQueryResponse>({ ...baseParams, uccontinue });
+        const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
+          ...baseParams,
+          // ucprop 传空串表示不返回额外字段以减小响应体；包内枚举类型不接受空串，故不纳入 baseParams 校验
+          ucprop: '',
+          ...(uccontinue ? { uccontinue } : {}),
+        });
         for (const contrib of response.query.usercontribs ?? []) {
           const username = normalizeUsername(contrib.user);
           counts[username] = (counts[username] ?? 0) + 1;

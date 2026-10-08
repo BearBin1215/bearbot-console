@@ -33,7 +33,7 @@
 - **默认参数**（`DEFAULT_PARAMS`）：`format=json`、`utf8=1`、`formatversion=2`，自动合并进每次请求。
 - **参数序列化**：
   - 数组用 `|` 拼接，如 `titles: ['A','B']` -> `titles=A|B`、`gcmnamespace: [10, 14]` -> `gcmnamespace=10|14`。
-  - 值为 `false` 的参数会被**丢弃**（宽松写法可用于条件性传参，如 `gcmcontinue: false` 不发送；使用 `satisfies` 校验时改用条件展开，见 2.3）。
+  - 值为 `false` 的参数会被**丢弃**（用于条件性传参，如 `gcmcontinue: false` 不发送）。
 - **HTTP**：POST 时参数放进 `URLSearchParams` body；携带 `User-Agent`（来自设置）与 `credentials: 'include'`（复用账号 session 的 cookie）。
 - **超时**：30 秒（`AbortController`）。
 - **重试**：按设置 `retryCount`（默认 1）/`retryInterval`（默认 3000ms）重试；`badtoken`、`permissiondenied`、`accessdenied`、`invalidtitle` 等不可重试错误码立即抛出（`NON_RETRYABLE_ERRORS`）。
@@ -124,7 +124,7 @@ do {
     action: 'query',
     list: 'allpages',
     aplimit: 'max',
-    // 续传参数只在翻页时携带（包类型不接受 false 哨兵值）
+    // 续传参数只在翻页时携带
     ...(apcontinue ? { apcontinue } : {}),
   } satisfies QueryRequest<never, 'allpages'>);
   apcontinue = res.continue?.apcontinue;

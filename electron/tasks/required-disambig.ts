@@ -1,3 +1,4 @@
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiQueryResponse, QueryPageExisting } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
@@ -55,8 +56,8 @@ const requiredDisambig: TaskHandler = async ({ api, logger }) => {
       gcmlimit: 'max',
       rdlimit: 'max',
       gcmtitle: 'Category:消歧义页',
-      gcmcontinue,
-    });
+      ...(gcmcontinue ? { gcmcontinue } : {}),
+    } satisfies QueryRequest<'redirects', 'categorymembers', never, 'categorymembers'>);
     gcmcontinue = catMembers.continue?.gcmcontinue || false;
     for (const item of (catMembers.query.pages ?? []) as QueryPageExisting<'redirects'>[]) {
       disambigList.add(item.title.replace('(消歧义页)', ''));

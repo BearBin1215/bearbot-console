@@ -16,6 +16,7 @@
  * `ucprop` 只取 `timestamp` 与 `comment`——加上 `tags` 会为每一行附加相关子查询，
  * 而标签只用于过滤，对结果没有影响。
  */
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiQueryResponse, ApiRecentChange, ApiUserContrib } from 'types-mediawiki-response';
 import type { MoegirlApi } from '../../services/moegirl';
 import type { TaskLogger } from '../../services/tasks/types';
@@ -90,10 +91,10 @@ async function takeNextBatch(
     action: 'query',
     list: 'allusers',
     // 只枚举至少有过一次编辑的用户，跳过大量从未编辑的注册账号
-    auwitheditsonly: 1,
+    auwitheditsonly: true,
     aulimit: batchSize,
-    aufrom: progress.userCursor ?? false,
-  });
+    ...(progress.userCursor ? { aufrom: progress.userCursor } : {}),
+  } satisfies QueryRequest<never, 'allusers'>);
   progress.batch = (response.query.allusers ?? []).map((item) => item.name);
   progress.userCursor = response.continue?.aufrom ?? null;
   progress.enumDone = !response.continue;
@@ -166,8 +167,8 @@ export async function scanByUserContribs(
         // 交给服务端取上限：普通账号 500，具备 apihighlimits 时为 5000
         uclimit: 'max',
         ucprop: ['timestamp', 'comment'],
-        uccontinue: cursor ?? false,
-      });
+        ...(cursor ? { uccontinue: cursor } : {}),
+      } satisfies QueryRequest<never, 'usercontribs'>);
       for (const record of response.query.usercontribs ?? []) {
         scanned += 1;
         if (countIfMassEdit(record, batchUsage, batchMonthly)) {
@@ -239,8 +240,8 @@ export async function scanByRecentChanges(
       rcstart: from,
       rcend: until,
       rclimit: 'max',
-      rccontinue: rccontinue ?? false,
-    });
+      ...(rccontinue ? { rccontinue } : {}),
+    } satisfies QueryRequest<never, 'recentchanges'>);
     for (const record of response.query.recentchanges ?? []) {
       scanned += 1;
       if (countIfMassEdit(record, changes, monthly)) {

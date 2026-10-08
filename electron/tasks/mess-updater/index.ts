@@ -1,3 +1,4 @@
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiPageIdentity, ApiQueryResponse, InfoPageExisting, QueryPage } from 'types-mediawiki-response';
 import type { TaskContext, TaskHandler } from '../../services/tasks/types';
 import type { MoegirlApi } from '../../services/moegirl';
@@ -127,9 +128,9 @@ async function fetchNamespaceMeta(ctx: SyncCtx, namespace: number): Promise<Map<
       generator: 'allpages',
       gapnamespace: namespace,
       gaplimit: 'max',
-      gapcontinue,
+      ...(gapcontinue ? { gapcontinue } : {}),
       prop: 'info',
-    });
+    } satisfies QueryRequest<'info', 'allpages', never, 'allpages'>);
     for (const page of (response.query.pages ?? []) as InfoPageExisting[]) {
       result.set(page.title, { pageid: page.pageid, ns: page.ns, revid: page.lastrevid });
     }
@@ -186,7 +187,7 @@ async function fetchTitleBatch(api: MoegirlApi, titles: string[], pageMap: Map<s
       rvslots: 'main',
       cllimit: 'max',
       ...continueParams,
-    });
+    } satisfies QueryRequest<'revisions' | 'categories'>);
     mergePages(pageMap, (response.query.pages ?? []) as ApiResponsePage[]);
     continueParams = response.continue || {};
   } while (continueParams.clcontinue !== undefined || continueParams.rvcontinue !== undefined);
@@ -443,8 +444,8 @@ const messUpdater: TaskHandler = async ({ api, logger, signal }) => {
         gapfilterredir: 'nonredirects',
         gaplimit: 'max',
         gapnamespace: namespace,
-        gapcontinue,
-      });
+        ...(gapcontinue ? { gapcontinue } : {}),
+      } satisfies QueryRequest<'info', 'allpages', never, 'allpages'>);
       gapcontinue = response.continue?.gapcontinue || false;
       for (const page of (response.query.pages ?? []) as InfoPageExisting[]) {
         const titleCN = page.varianttitles?.['zh-cn'];

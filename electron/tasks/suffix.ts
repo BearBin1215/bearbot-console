@@ -1,3 +1,4 @@
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { ApiQueryResponse } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
@@ -47,7 +48,7 @@ const suffix: TaskHandler = async ({ api, logger }) => {
   // 获取全站重定向，分析后缀↔无后缀的对应关系
   const suffix2Origin: string[] = [];
   const origin2Suffix: string[] = [];
-  let garcontinue: string | boolean = false;
+  let garcontinue: string | undefined;
   logger.info('开始获取重定向页面');
   do {
     const allRedirects: ApiQueryResponse = await api.post<ApiQueryResponse>({
@@ -55,10 +56,10 @@ const suffix: TaskHandler = async ({ api, logger }) => {
       generator: 'allredirects',
       redirects: true,
       garlimit: 'max',
-      garnamespace: '0',
-      garcontinue,
-    });
-    garcontinue = allRedirects.continue?.garcontinue || false;
+      garnamespace: 0,
+      ...(garcontinue ? { garcontinue } : {}),
+    } satisfies QueryRequest<never, 'allredirects', never, 'allredirects'>);
+    garcontinue = allRedirects.continue?.garcontinue;
     for (const { from, to } of allRedirects.query.redirects ?? []) {
       if (!from || !to) {
         continue;

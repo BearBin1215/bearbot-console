@@ -257,9 +257,8 @@ export class MoegirlApi {
    * 获取指定分类的全部成员
    *
    * 自动使用 `cmcontinue` 完成分页。额外参数用于传入 `cmnamespace`、`cmtype`、`cmsort` 等
-   * `list=categorymembers` 查询参数，多值参数须用数组（如 `cmnamespace: [10, 14]`）。
-   * `action`、`list`、`cmtitle`、`cmpageid`、`cmlimit` 与 `cmcontinue` 由本方法统一控制，
-   * 已从额外参数类型中剔除。
+   * `list=categorymembers` 查询参数（多值参数须用数组，如 `cmnamespace: [10, 14]`）；
+   * `action`、`list`、`cmtitle`、`cmpageid`、`cmlimit` 与 `cmcontinue` 由本方法统一控制。
    *
    * @param category 分类标题（含 Category: 前缀）
    * @param extraParams 额外的 categorymembers 查询参数
@@ -288,9 +287,6 @@ export class MoegirlApi {
 
   /**
    * 获取全站页面标题列表
-   *
-   * `aplimit` 与 `apcontinue` 由本方法统一控制，已从额外参数类型中剔除。
-   *
    * @param extraParams 额外的查询参数（如 `{ apfilterredir: 'nonredirects' }` 排除重定向）
    * @returns 页面标题集合（Set）
    */
