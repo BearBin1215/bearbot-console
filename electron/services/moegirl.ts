@@ -18,6 +18,14 @@ import type { Session } from 'electron';
 import { getAllSettings } from './store';
 import type { TaskLogger } from './tasks/types';
 import type {
+  ActionRequest,
+  ApiQueryAllpagesParams,
+  ApiQueryCategorymembersParams,
+  ApiRawParams,
+  ClientToken,
+  QueryRequest,
+} from 'types-mediawiki-params';
+import type {
   ApiEditResponse,
   ApiQueryResponse,
   QueryPage,
@@ -33,11 +41,17 @@ interface RequestOptions {
   timeout?: number;
 }
 
-/** 萌娘百科 API 请求参数（action 始终为 string，其余参数不限类型） */
-type ApiParams = { action: string } & Record<string, unknown>;
+/**
+ * 萌娘百科 API 请求参数（宽松类型）
+ *
+ * 值域取 types-mediawiki-params 的 {@link ApiRawParams}：允许任意参数名（含未建模的扩展参数），
+ * 但值只接受 API 可序列化的标量与同类数组，避免误传对象、null 等无法编码的值。
+ * 调用点可进一步用 `satisfies QueryRequest<...>` / `satisfies ClientToken<ActionRequest>` 校验模块与参数名
+ */
+type ApiParams = { action: string } & ApiRawParams;
 
 /** 请求默认携带参数 */
-const DEFAULT_PARAMS: Record<string, unknown> = {
+const DEFAULT_PARAMS: ApiRawParams = {
   format: 'json',
   utf8: 1,
   formatversion: 2,
@@ -217,7 +231,7 @@ export class MoegirlApi {
       titles: title,
       rvprop: 'content',
       rvslots: 'main',
-    });
+    } satisfies QueryRequest<'revisions'>);
     const [pageData] = (res.query.pages ?? []) as QueryPage<'revisions'>[];
     if (pageData?.missing) {
       throw new Error(`页面[[${title}]]不存在`);
@@ -234,7 +248,8 @@ export class MoegirlApi {
    * 获取指定分类的全部成员
    *
    * 自动使用 `cmcontinue` 完成分页。额外参数用于传入 `cmnamespace`、`cmtype`、`cmsort` 等
-   * `list=categorymembers` 查询参数；请求类型、分类标题、分页大小与续传参数由本方法统一控制。
+   * `list=categorymembers` 查询参数（多值参数须用数组，如 `cmnamespace: [10, 14]`）；
+   * `action`、`list`、`cmtitle`、`cmpageid`、`cmlimit` 与 `cmcontinue` 由本方法统一控制。
    *
    * @param category 分类标题（含 Category: 前缀）
    * @param extraParams 额外的 categorymembers 查询参数
@@ -242,7 +257,7 @@ export class MoegirlApi {
    */
   async fetchCategoryMembers<T = TitleEntry>(
     category: string,
-    extraParams?: Record<string, unknown>,
+    extraParams?: Omit<ApiQueryCategorymembersParams, 'cmtitle' | 'cmpageid' | 'cmlimit' | 'cmcontinue'>,
   ): Promise<T[]> {
     const members: T[] = [];
     let cmcontinue: string | false = false;
@@ -253,8 +268,8 @@ export class MoegirlApi {
         list: 'categorymembers',
         cmtitle: category,
         cmlimit: 'max',
-        cmcontinue,
-      });
+        ...(cmcontinue ? { cmcontinue } : {}),
+      } satisfies QueryRequest<never, 'categorymembers'>);
       cmcontinue = response.continue?.cmcontinue || false;
       members.push(...(response.query.categorymembers ?? []) as unknown as T[]);
     } while (cmcontinue);
@@ -266,7 +281,7 @@ export class MoegirlApi {
    * @param extraParams 额外的查询参数（如 `{ apfilterredir: 'nonredirects' }` 排除重定向）
    * @returns 页面标题集合（Set）
    */
-  async fetchAllPages(extraParams?: Record<string, unknown>) {
+  async fetchAllPages(extraParams?: Omit<ApiQueryAllpagesParams, 'aplimit' | 'apcontinue'>) {
     const pageList = new Set<string>();
     let apcontinue: string | false = false;
     do {
@@ -274,9 +289,9 @@ export class MoegirlApi {
         action: 'query',
         list: 'allpages',
         aplimit: 'max',
-        apcontinue,
+        ...(apcontinue ? { apcontinue } : {}),
         ...extraParams,
-      });
+      } satisfies QueryRequest<never, 'allpages'>);
       apcontinue = allPages.continue?.apcontinue || false;
       for (const page of allPages.query.allpages ?? []) {
         pageList.add(page.title);
@@ -296,7 +311,7 @@ export class MoegirlApi {
         action: 'query',
         meta: 'tokens',
         type: tokenType,
-      });
+      } satisfies QueryRequest<never, never, 'tokens'>);
       const token = data.query.tokens?.[`${tokenType}token`];
       if (!token) {
         throw new Error(`获取 ${tokenType} Token 失败`);
@@ -353,7 +368,7 @@ export class MoegirlApi {
       summary,
       bot: true,
       tags: 'Bot',
-    }, options);
+    } satisfies ClientToken<ActionRequest>, options);
     // 校验编辑结果：MediaWiki 在拦截/权限不足时返回 result: "Failure" 但不通过 error 字段抛错
     if (res.edit.result !== 'Success') {
       throw new Error(`编辑[[${title}]]失败：${res.edit.result ?? '未知结果'}`);

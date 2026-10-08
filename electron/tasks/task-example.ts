@@ -1,3 +1,4 @@
+import type { QueryRequest } from 'types-mediawiki-params';
 import type { TaskHandler } from '../services/tasks/types';
 
 /**
@@ -29,10 +30,11 @@ const taskExample: TaskHandler = async ({ logger, api, params }) => {
     logger.info(`命名空间：${namespaces.join('、')}`);
   }
 
+  // 请求参数可用 types-mediawiki-params 的 QueryRequest 做编译期校验（模块选择器、参数名、取值与必填项）
   const siteInfo = await api.get({
     action: 'query',
     meta: 'siteinfo',
-  });
+  } satisfies QueryRequest<never, never, 'siteinfo'>);
 
   logger.info(`'''站点名称'''：${siteInfo.query.general.sitename}，''主页地址''：[[${siteInfo.query.general.mainpage}]]`);
 
