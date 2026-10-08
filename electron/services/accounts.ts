@@ -18,6 +18,7 @@
 import { session, type Session } from 'electron';
 import { randomUUID } from 'node:crypto';
 import type { Account, AccountRecord, UserInfo } from '@shared/types';
+import type { ActionRequest, ApiRawParams, QueryRequest } from 'types-mediawiki-params';
 import type { ApiClientLoginResponse, ApiQueryResponse, ApiUser } from 'types-mediawiki-response';
 import {
   getAllAccounts,
@@ -114,6 +115,8 @@ async function login(api: MoegirlApi, username: string, password: string): Promi
 
   const logintoken = await api.getToken('login');
   // 请求被拒时 MoegirlApi 会抛出 MoegirlRequestError（含 error.info），此处只会拿到成功载荷
+  // username/password/rememberMe 为 AuthManager 的动态字段，未被 types-mediawiki-params 建模，
+  // 交叉 ApiRawParams 以放行额外字段，同时保留 action 与 logintoken 的校验
   const data = await api.post<ApiClientLoginResponse>({
     action: 'clientlogin',
     logintoken,
@@ -121,7 +124,7 @@ async function login(api: MoegirlApi, username: string, password: string): Promi
     username,
     password,
     rememberMe: '1',
-  });
+  } satisfies ActionRequest & ApiRawParams);
 
   const clientlogin = data.clientlogin;
   if (clientlogin?.status === 'PASS') {
@@ -160,8 +163,9 @@ async function fetchUserInfo(api: MoegirlApi): Promise<UserInfo> {
     action: 'query',
     list: 'users',
     usprop: ['groups', 'rights'],
-    ususerids: status.userId,
-  });
+    // cookie 中的用户 ID 为字符串，转为数字以符合 API 参数类型
+    ususerids: Number(status.userId),
+  } satisfies QueryRequest<never, 'users'>);
   const user = res.query.users?.[0] as MoegirlUser | undefined;
   return {
     groups: user?.groups || [],

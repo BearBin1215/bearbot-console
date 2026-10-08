@@ -32,12 +32,55 @@
 
 - **默认参数**（`DEFAULT_PARAMS`）：`format=json`、`utf8=1`、`formatversion=2`，自动合并进每次请求。
 - **参数序列化**：
-  - 数组用 `|` 拼接，如 `titles: ['A','B']` -> `titles=A|B`、`gcmnamespace: '10|14'`。
-  - 值为 `false` 的参数会被**丢弃**（用于条件性传参，如 `gcmcontinue: false` 不发送）。
+  - 数组用 `|` 拼接，如 `titles: ['A','B']` -> `titles=A|B`、`gcmnamespace: [10, 14]` -> `gcmnamespace=10|14`。
+  - 值为 `false` 的参数会被**丢弃**（宽松写法可用于条件性传参，如 `gcmcontinue: false` 不发送；使用 `satisfies` 校验时改用条件展开，见 2.3）。
 - **HTTP**：POST 时参数放进 `URLSearchParams` body；携带 `User-Agent`（来自设置）与 `credentials: 'include'`（复用账号 session 的 cookie）。
 - **超时**：30 秒（`AbortController`）。
 - **重试**：按设置 `retryCount`（默认 1）/`retryInterval`（默认 3000ms）重试；`badtoken`、`permissiondenied`、`accessdenied`、`invalidtitle` 等不可重试错误码立即抛出（`NON_RETRYABLE_ERRORS`）。
 - **错误解析**：即使 HTTP 200，若响应体含 `error` 字段也会抛出 `Error(error.info || error.code)`；最终包装为 `MoegirlRequestError`，同时保留错误码（`error.apiCode`）与请求/响应详情（`error.detail`）。任务可据此按错误码分支处理，如 `accessdenied` 表示当前账号无权读取该内容。
+
+### 2.3 请求参数类型
+
+本仓库引入 [types-mediawiki-params](https://github.com/BearBin1215/types-mediawiki-params)（devDependency，`import type` 引用、无运行时开销）。
+发起请求时给参数对象加 `satisfies`，模块选择器（`prop`/`list`/`meta`/`generator`）、参数名前缀、枚举取值与必填项都会在编译期检查：
+
+```ts
+import type { ActionRequest, ClientToken, QueryRequest } from 'types-mediawiki-params';
+
+const res = await api.post({
+  action: 'query',
+  prop: 'revisions',
+  titles: ['页面A', '页面B'],
+  rvprop: ['content', 'timestamp'],
+} satisfies QueryRequest<'revisions'>);
+
+// 写操作：token 由 postWithToken 注入，ClientToken 会把 token 参数自动变为可选
+await api.postWithToken('csrf', {
+  action: 'edit',
+  title: '页面A',
+  text: '新内容',
+  summary: '编辑摘要',
+  bot: true,
+} satisfies ClientToken<ActionRequest>);
+```
+
+使用 `generator` 时需显式指定第 4 个泛型参数（依次为 `prop`、`list`、`meta`、`generator` 的模块名）：
+
+```ts
+const res = await api.post({
+  action: 'query',
+  prop: 'links',
+  generator: 'categorymembers',
+  gcmtitle: 'Category:分类名',
+  gcmlimit: 'max',
+} satisfies QueryRequest<'links', 'categorymembers', never, 'categorymembers'>);
+```
+
+注意：使用 `satisfies` 校验时，多值参数须用**数组**（`cmnamespace: [10, 14]`），不能用 `|` 拼接的字符串（该形式仅适用于字符串版请求类型的模块选择器）；续传参数用条件展开而不是 `false` 哨兵：
+
+```ts
+...(cont ? { cmcontinue: cont } : {})
+```
 
 ## 3. 编辑页面
 
@@ -51,7 +94,7 @@ const res = await api.postWithToken('csrf', {
   summary: '自动更新列表',
   bot: true,            // 标记为机器人编辑
   tags: 'Bot',          // 应用 Bot 标签
-});
+} satisfies ClientToken<ActionRequest>);
 if (res.edit?.nochange) {
   // 页面内容与现版本一致，未产生新版本
 }
@@ -75,10 +118,16 @@ if (res.edit?.nochange) {
 
 ```ts
 const pageList = new Set<string>();
-let apcontinue: string | false = false;
+let apcontinue: string | undefined;
 do {
-  const res = await api.post({ action: 'query', list: 'allpages', aplimit: 'max', apcontinue });
-  apcontinue = res.continue?.apcontinue || false;
+  const res = await api.post({
+    action: 'query',
+    list: 'allpages',
+    aplimit: 'max',
+    // 续传参数只在翻页时携带（包类型不接受 false 哨兵值）
+    ...(apcontinue ? { apcontinue } : {}),
+  } satisfies QueryRequest<never, 'allpages'>);
+  apcontinue = res.continue?.apcontinue;
   for (const page of res.query.allpages) pageList.add(page.title);
 } while (apcontinue);
 ```

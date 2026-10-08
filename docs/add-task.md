@@ -127,6 +127,10 @@ const data = await api.get({ action: 'query', ... }, { retries: 3, timeout: 6000
 
 > 代码里的数值覆盖应用设置，不填写则使用应用设置。
 
+> 请求参数可用 [types-mediawiki-params](https://github.com/BearBin1215/types-mediawiki-params) 做编译期校验：
+> 给参数对象加 `satisfies QueryRequest<...>`（query 请求）或 `satisfies ClientToken<ActionRequest>`（携带 token 的写操作），
+> 模块选择器、参数名前缀、枚举取值与必填项都会在编译期检查。多值参数须用数组，不能用 `|` 拼接字符串。详见 [请求参数类型](./moegirl-api.md#23-请求参数类型)。
+
 #### `postWithToken`
 
 携带 token 发起 POST 请求，自动处理 token 获取和 badtoken 刷新：
@@ -189,19 +193,20 @@ for (const member of members) {
 const filteredMembers = await api.fetchCategoryMembers<{ title: string; type: string }>(
   'Category:分类名',
   {
-    cmnamespace: '10|14',
-    cmtype: 'page|subcat',
-    cmprop: 'title|type',
+    cmnamespace: [10, 14],
+    cmtype: ['page', 'subcat'],
+    cmprop: ['title', 'type'],
   },
 );
 ```
 
-第二个参数用于传入 `cmnamespace`、`cmtype`、`cmprop`、`cmsort` 等 `list=categorymembers` 参数。
-`action`、`list`、`cmtitle`、`cmlimit` 与 `cmcontinue` 由方法统一控制，传入同名参数不会覆盖内部值。
+第二个参数用于传入 `cmnamespace`、`cmtype`、`cmprop`、`cmsort` 等 `list=categorymembers` 参数，
+类型为 [types-mediawiki-params](https://github.com/BearBin1215/types-mediawiki-params) 的 `ApiQueryCategorymembersParams`，
+已剔除 `cmtitle`、`cmpageid`、`cmlimit`、`cmcontinue` 等由方法统一控制的字段；参数名与取值会在编译期校验，多值参数须用数组。
 
 #### `fetchAllPages`
 
-获取全站页面标题列表（Set），支持传入额外查询参数：
+获取全站页面标题列表（Set），支持传入额外查询参数（类型 `ApiQueryAllpagesParams`，已剔除 `aplimit` 与 `apcontinue`）：
 
 ```typescript
 const allPages: Set<string> = await api.fetchAllPages();
