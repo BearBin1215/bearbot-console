@@ -18,6 +18,7 @@
 import { session, type Session } from 'electron';
 import { randomUUID } from 'node:crypto';
 import type { Account, AccountRecord, UserInfo } from '@shared/types';
+import type { ActionRequest, ApiRawParams, QueryRequest } from 'types-mediawiki-params';
 import {
   getAllAccounts,
   setAllAccounts,
@@ -100,6 +101,7 @@ async function login(api: MoegirlApi, username: string, password: string): Promi
   const { moegirlDomain } = getAllSettings();
 
   const logintoken = await api.getToken('login');
+  // username/password/rememberMe 属于 AuthManager 的动态字段，包未建模，交叉 ApiRawParams 放行
   const data = await api.post({
     action: 'clientlogin',
     logintoken,
@@ -107,7 +109,7 @@ async function login(api: MoegirlApi, username: string, password: string): Promi
     username,
     password,
     rememberMe: '1',
-  });
+  } satisfies ActionRequest & ApiRawParams);
 
   const clientlogin = data?.clientlogin;
   if (clientlogin?.status === 'PASS') {
@@ -148,8 +150,8 @@ async function fetchUserInfo(api: MoegirlApi): Promise<UserInfo> {
     action: 'query',
     list: 'users',
     usprop: ['groups', 'rights'],
-    ususerids: status.userId,
-  });
+    ususerids: Number(status.userId),
+  } satisfies QueryRequest<never, 'users'>);
   const user = res?.query?.users?.[0];
   return {
     groups: user?.groups || [],
