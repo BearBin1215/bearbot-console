@@ -23,7 +23,7 @@ import { formatSiteTime } from './time';
 /** 统计起点：MassEdit 小工具启用时间，往前推一天避免边界缺失 */
 const DEFAULT_SINCE = '2023-04-27T00:00:00Z';
 
-/** 最近更改保留期的默认天数，取85避免边界缺失 */
+/** 最近更改保留期的默认天数，取 85 避免边界缺失 */
 export const DEFAULT_RC_MAX_AGE_DAYS = 85;
 
 /** 统计结果写入的目标页面 */
@@ -159,7 +159,7 @@ const massEditUsage: TaskHandler = async ({ api, commonsApi, logger, params, sig
     const stage = (progress.sites[site.key] ??= createSiteProgress());
     /** 该站点的窗口下界：续跑沿用上次窗口的下界，否则从覆盖点或统计起点开始 */
     const windowStart = stage.coveredUntil ?? progress.since;
-    /** 该站点的窗口上界；已有未完成的窗口时沿用其原上界，使补扫仍落在同一区间 */
+    /** 该站点的窗口上界；已有未完成的窗口时沿用其原上界，使补扫仍在同一区间 */
     const windowUntil = openWindow(stage, runStartedAt);
     if (Date.parse(windowUntil) < Date.parse(coveredUpTo)) {
       coveredUpTo = windowUntil;

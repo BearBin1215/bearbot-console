@@ -71,8 +71,8 @@ export async function restoreProgress(
     return null;
   }
 
-  // 覆盖上界须落在 (since, now] 内：早于统计起点说明快照比本次范围还旧，晚于当前时间说明时间戳不可信，
-  // 两种情况下用其作为下界都会漏统计，宁可重扫
+  // 覆盖上界须位于 (since, now] 内：早于统计起点说明快照比本次范围还旧，晚于当前时间说明时间戳不可信，
+  // 两种情况下用其作为下界都会漏统计，宁可重新扫描
   const lastUpdate = typeof snapshot.lastUpdate === 'string' ? snapshot.lastUpdate : null;
   const lastUpdateMs = lastUpdate ? Date.parse(lastUpdate) : NaN;
   if (!lastUpdate

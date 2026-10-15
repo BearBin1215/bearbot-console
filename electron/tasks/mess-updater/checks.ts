@@ -106,7 +106,7 @@ export function checkOrder(arrays: number[][]): number {
   return 0;
 }
 
-/** 冗余管道符检查（0和10共用） */
+/** 冗余管道符检查（0 和 10 共用） */
 function redundantPipeShared(messOutput: MessOutput): PageCheck {
   return (text, _categories, title) => {
     const normal = text.match(/\[\[ *([^\]]+) *\| *\1 *\]\]/);
@@ -120,7 +120,7 @@ function redundantPipeShared(messOutput: MessOutput): PageCheck {
   };
 }
 
-/** 冗余 {{0}} 模板检查（0和10共用），用于排查 `{{0}}01月`、`{{0}}29日` 这类冗余的日期前缀 */
+/** 冗余 {{0}} 模板检查（0 和 10 共用），用于排查 `{{0}}01月`、`{{0}}29日` 这类冗余的日期前缀 */
 function redundantZeroShared(messOutput: MessOutput): PageCheck {
   return (text, _categories, title) => {
     const matches = text.match(/\{\{s*0\s*\}\}\d\d[日月]/g);
@@ -138,7 +138,7 @@ const DEPRECATED_TAGS = [
   { tag: 'font', regex: /<(font)(?:\s[^>]*)?>|<\/font>/gi },
 ];
 
-/** 弃用标签检查（0和10共用） */
+/** 弃用标签检查（0 和 10 共用） */
 function deprecatedTagsShared(messOutput: MessOutput): PageCheck {
   return (text, _categories, title) => {
     for (const { tag, regex } of DEPRECATED_TAGS) {
@@ -163,7 +163,7 @@ function deprecatedTagsShared(messOutput: MessOutput): PageCheck {
 export function createMainChecks(ctx: CheckContext): PageCheck[] {
   const { messOutput, topTipTemplates: topTipTemplate } = ctx;
 
-  /** 检查消歧义页内中的管道符 */
+  /** 检查消歧义页内的管道符 */
   const pipeInDisambig: PageCheck = (text, categories, title) => {
     if (categories.includes('Category:消歧义页')) {
       const prefix = text.match(/\[\[(.+)\(.+\)\|\1\]\].*—/);
@@ -193,7 +193,7 @@ export function createMainChecks(ctx: CheckContext): PageCheck[] {
     }
   };
 
-  /** 能用内链非要用外链 */
+  /** 模板参数中能使用内链图片却使用了外链图片 */
   const innerToOuter: PageCheck = (text, _categories, title) => {
     if (new RegExp(`${TEMPLATES.prefix}(背景[图圖]片|替[换換][侧側][边邊][栏欄]底[图圖])[^}]+img\\.moegirl\\.org\\.cn`, 'si').test(text) && title !== 'Deltarune/黑暗世界') {
       messOutput.addPageToList('能用内链非要外链', title);

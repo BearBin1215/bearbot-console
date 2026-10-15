@@ -153,7 +153,7 @@ export function deletePages(titles: string[]): number {
  * 流式迭代所有页面记录
  *
  * 按 rowid 分页惰性产出，避免一次性把全表源代码载入内存。
- * 检查循环逐条消费、用完即丢；每批之间让出事件循环，避免长时间阻塞主进程。
+ * 检查循环逐条消费、不做二次使用；每批之间让出事件循环，避免长时间阻塞主进程。
  *
  * @param chunkSize 单批读取的页面数
  * @yields 逐条页面记录

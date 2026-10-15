@@ -142,7 +142,7 @@ export function toNextWholeSecond(timestamp: string): string {
 /**
  * 取得当前窗口的上界，必要时开启新窗口
  *
- * 已有进行中的窗口时返回其原上界，让补扫仍然落在同一区间内。
+ * 已有进行中的窗口时返回其原上界，让补扫仍在同一区间内。
  *
  * @param stage 站点进度（原地修改）
  * @param windowUntil 需要开启新窗口时使用的上界（ISO 8601）
