@@ -16,7 +16,7 @@
 
 ## 2. 项目封装：`MoegirlApi`
 
-定义于 `electron/services/moegirl.ts`。任务通过 `TaskContext` 注入的 `api`（主站）与 `commonsApi`（共享站）使用，**不要自行 new**。
+定义于 `electron/services/moegirl.ts`。任务通过 `TaskContext` 注入的 `api`（主站）与 `commonsApi`（共享站）使用，**不要自行创建实例**。
 
 ### 2.1 常用方法
 
@@ -33,7 +33,7 @@
 - **默认参数**（`DEFAULT_PARAMS`）：`format=json`、`utf8=1`、`formatversion=2`，自动合并进每次请求。
 - **参数序列化**：
   - 数组用 `|` 拼接，如 `titles: ['A','B']` -> `titles=A|B`、`gcmnamespace: [10, 14]` -> `gcmnamespace=10|14`。
-  - 值为 `false` 的参数会被**丢弃**（用于条件性传参，如 `gcmcontinue: false` 不发送）。
+  - 值为 `false` 的参数**不会发送**（用于条件性传参，如 `gcmcontinue: false` 表示不传该参数）。
 - **HTTP**：POST 时参数放进 `URLSearchParams` body；携带 `User-Agent`（来自设置）与 `credentials: 'include'`（复用账号 session 的 cookie）。
 - **超时**：30 秒（`AbortController`）。
 - **重试**：按设置 `retryCount`（默认 1）/`retryInterval`（默认 3000ms）重试；`badtoken`、`permissiondenied`、`invalidtitle` 等不可重试错误码立即抛出（`NON_RETRYABLE_ERRORS`）。
@@ -76,7 +76,7 @@ const res = await api.post({
 } satisfies QueryRequest<'links', 'categorymembers', never, 'categorymembers'>);
 ```
 
-注意：使用 `satisfies` 校验时，多值参数须用**数组**（`cmnamespace: [10, 14]`），不能用 `|` 拼接的字符串（该形式仅适用于字符串版请求类型的模块选择器）；续传参数用条件展开而不是 `false` 哨兵：
+注意：使用 `satisfies` 校验时，多值参数须用**数组**（`cmnamespace: [10, 14]`），不能用 `|` 拼接的字符串（该形式仅适用于字符串版请求类型的模块选择器）；续传参数使用条件展开，不要传 `false` 占位：
 
 ```ts
 ...(cont ? { cmcontinue: cont } : {})

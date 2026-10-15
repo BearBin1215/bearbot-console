@@ -61,7 +61,7 @@ const DEFAULT_PARAMS: ApiRawParams = {
  * 当前请求作用域的取消信号存储
  *
  * 由调用方（如 runner）在执行任务前通过 run 注入 AbortSignal，
- * 供 {@link MoegirlApi} 的内部方法读取，用于手动停止时立即中断在飞的萌娘百科请求
+ * 供 {@link MoegirlApi} 的内部方法读取，用于手动停止时立即中断进行中的萌娘百科请求
  */
 export const abortSignalStorage = new AsyncLocalStorage<AbortSignal>();
 
@@ -110,7 +110,7 @@ function acquireThrottleSlot(signal?: AbortSignal): Promise<void> {
       throttleNextAvailable = Date.now() + interval;
     }
   });
-  // 链尾不因 rejection 断裂，保证后续请求仍可排队
+  // 链尾不会因 rejection 中断，保证后续请求仍可排队
   throttleChain = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -398,7 +398,7 @@ export class MoegirlApi {
    * - 参数序列化（数组用 | 拼接）
    * - User-Agent 设置
    * - 请求超时（默认从应用设置读取，可通过 options.timeout 覆盖）
-   * - 任务取消信号中断（手动停止时立即打断在飞请求，且不再重试）
+   * - 任务取消信号中断（手动停止时立即打断进行中的请求，且不再重试）
    * - 重试逻辑（根据设置中的 retryCount 和 retryInterval）
    * - 错误解析
    * - 失败时抛出 {@link MoegirlRequestError}
@@ -460,7 +460,7 @@ export class MoegirlApi {
       lastResponseBody = undefined;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
-      // 任务取消信号触发时立即中断本次在飞请求
+      // 任务取消信号触发时立即中断本次进行中的请求
       const onTaskAbort = () => controller.abort();
       taskSignal?.addEventListener('abort', onTaskAbort, { once: true });
       try {

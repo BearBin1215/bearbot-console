@@ -67,7 +67,7 @@ class WebhookServer {
   private running: { server: ServerType; target: WebhookTarget } | null = null;
   /** 上次启动失败的配置与时间，冷却期内相同配置不再重试 */
   private lastFailed: { target: WebhookTarget; at: number } | null = null;
-  /** 在途的 applySettings/stop 操作链（promise 链串行化，消除并发调用导致的重复监听泄漏） */
+  /** applySettings/stop 的操作链（promise 链串行化，消除并发调用导致的重复监听泄漏） */
   private pending: Promise<void> = Promise.resolve();
   /** 推送回调集合（日志、状态、执行记录），由主进程注入 */
   private callbacks: TaskRunCallbacks | null = null;
@@ -208,13 +208,13 @@ class WebhookServer {
   }
 
   /**
-   * 停止服务；未运行时为空操作（同样加入串行链，与在途的 applySettings 顺序执行）
+   * 停止服务；未运行时为空操作（同样加入串行链，与进行中的 applySettings 顺序执行）
    *
    * close 前先强制断开全部连接：wait=true 的同步请求可持续数分钟且 undici 默认
    * keep-alive 复用连接，仅 close() 会等待其自然结束导致端口切换长时间阻塞。
    */
   stop(): Promise<void> {
-    // 同 applySettings：隔离链上历史错误，避免前序 rejection 卡死后续操作
+    // 同 applySettings：隔离链上历史错误，避免前序 rejection 阻塞后续操作
     const run = this.pending.catch(() => {}).then(() => this.stopSerial());
     this.pending = run.catch(() => {});
     return run;

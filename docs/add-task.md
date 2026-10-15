@@ -29,7 +29,7 @@
   - [请求格式](#请求格式)
   - [响应与错误码](#响应与错误码)
   - [服务状态与失败恢复](#服务状态与失败恢复)
-  - [重启与在途请求](#重启与在途请求)
+  - [重启与进行中的请求](#重启与进行中的请求)
   - [跨设备触发](#跨设备触发)
 - [迁移检查清单](#迁移检查清单)
 
@@ -100,7 +100,7 @@ const myTask: TaskHandler = async ({ api, commonsApi, logger, user, params, sign
 
 `get`、`post`等方法和 MediaWiki 网页提供的 `mw.Api` 基本相同，除此之外提供一些封装好的方法，如获取页面源代码、编辑页面等。
 
-> api 发起的请求默认携带 `formatversion=2`（和[API沙盒](https://zh.moegirl.org.cn/Special:API沙盒)一致），迁移时需要注意响应体可能不同，或者自行修改 [MoegirlApi 源代码](../electron/services/moegirl.ts)
+> api 发起的请求默认携带 `formatversion=2`（和[API沙盒](https://zh.moegirl.org.cn/Special:API沙盒)一致），迁移时需要注意响应体可能与 `mw.Api` 不同，也可以自行修改 [MoegirlApi 源代码](../electron/services/moegirl.ts)
 
 提供以下方法：
 
@@ -115,7 +115,7 @@ const data = await api.get({
 });
 ```
 
-第二个参数可传入选项对象，支持 `retries` 重试次数与 `timeout`请求超时毫秒数：
+第二个参数可传入选项对象，支持 `retries`（重试次数）与 `timeout`（请求超时毫秒数）：
 
 ```typescript
 // 不重试
@@ -125,7 +125,7 @@ const data = await api.post({ action: 'query', ... }, { retries: 0 });
 const data = await api.get({ action: 'query', ... }, { retries: 3, timeout: 60000 });
 ```
 
-> 代码里的数值覆盖应用设置，不填写则使用应用设置。
+> 代码中传入的选项优先于应用设置，未传入时使用应用设置。
 
 > 请求参数可用 [types-mediawiki-params](https://github.com/BearBin1215/types-mediawiki-params) 做编译期校验：
 > 给参数对象加 `satisfies QueryRequest<...>`（query 请求）或 `satisfies ClientToken<ActionRequest>`（携带 token 的写操作），
@@ -277,7 +277,7 @@ do {
 
 #### 中断其他接口请求
 
-调用非萌娘百科的外部接口时需使用原生 `fetch`，此时不会自动响应中止，需手动把 `signal` 传入请求参数。`signal` 是标准 [AbortSignal](https://developer.mozilla.org/zh-CN/docs/Web/API/AbortSignal)，手动停止时在飞的请求会立即中断并抛出 `AbortError`，框架捕获后标记任务为“已停止”：
+调用非萌娘百科的外部接口时需使用原生 `fetch`，此时不会自动响应中止，需手动把 `signal` 传入请求参数。`signal` 是标准 [AbortSignal](https://developer.mozilla.org/zh-CN/docs/Web/API/AbortSignal)，手动停止时进行中的请求会立即中断并抛出 `AbortError`，框架捕获后标记任务为“已停止”：
 
 ```typescript
 const res = await fetch('https://example.com/api', {
@@ -302,7 +302,7 @@ const data = await res.json();
 await sleep(1000); // 等待 1 秒，可被中断
 ```
 
-避免直接使用 `setTimeout`，以免出现任务执行结束判定错误及打断失败。
+避免直接使用 `setTimeout`，以免任务结束时无法正确判定执行状态、手动打断也无法生效。
 
 ### `params` — 任务参数
 
@@ -344,7 +344,7 @@ import myTaskHandler from '../../tasks/my-task';
 
 注册完成后，启动应用进入任务管理界面，点击任务的设置按钮配置执行计划（cron 表达式），然后开启任务的启用开关，任务即会按计划自动执行。
 
-同一任务正在执行时，新的触发会被自动忽略（防重入），触发来源（cron / 手动 / Webhook）之间同样适用。任务自然结束（成功/失败）时，若开启了"任务完成通知"设置，会发送系统桌面通知（手动停止不通知）。
+同一任务正在执行时，新的触发会被自动忽略（防重入），该限制同样适用于各触发来源（cron / 手动 / Webhook）之间。任务自然结束（成功/失败）时，若开启了"任务完成通知"设置，会发送系统桌面通知（手动停止不通知）。
 
 ### 任务参数
 
@@ -460,7 +460,7 @@ curl -X POST http://127.0.0.1:4765/webhook/my-task \
 
 服务启动失败（端口被占用、权限不足等）不影响应用其余功能：调度与手动执行照常，失败原因记录为界面系统日志。启动失败的配置在 **5 秒冷却期** 内不会重复重试，避免每次保存其他设置都触发重启尝试并重复输出错误日志；冷却期过后或修改了监听地址/端口后会自动重试，无需重启应用。
 
-### 重启与在途请求
+### 重启与进行中的请求
 
 修改监听地址或端口、关闭服务时，正在等待结果的 `wait: true` 请求会被强制断开（HTTP 连接提前结束），但**任务本身不会被中断**，会继续在后台执行完成，日志与执行记录照常推送。调用方收到连接断开后，可通过任务日志或 `wait: false` 触发查询确认执行结果。
 
