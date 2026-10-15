@@ -4,7 +4,7 @@ import { useLogStore } from '@/stores/log-store';
 /**
  * 上报渲染进程错误（对齐主进程 logFatalError）
  *
- * 三处落点保持与主进程一致：
+ * 与主进程一致，输出到以下位置：
  * - console.error：开发者工具可见
  * - 内存日志面板：即时呈现给用户（白屏兜底重载前仍可见）
  * - 主进程持久化：通过 log:renderer-error 复用任务日志链路写入日志文件

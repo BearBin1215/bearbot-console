@@ -12,6 +12,18 @@
     overflow: hidden;
   }
 
+  /* 仅补顶边：Win10 隐藏标题栏后系统只画左/右/下三侧边框、缺顶边。
+   * 自绘四边会叠在原生三边外侧导致三侧偏粗，故只补系统漏掉的顶边，其余三边交回原生。
+   * 顶线用固定不透明度的半透明黑（不随失焦变淡、避免顶边“消失”）；z-index 高于内容、低于 antd 弹窗遮罩 */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    box-shadow: inset 0 1px 0 0 rgb(0 0 0 / 24%);
+  }
+
   /* 设置的界面字体 */
   .ant-app {
     font-family: var(--ant-font-family);

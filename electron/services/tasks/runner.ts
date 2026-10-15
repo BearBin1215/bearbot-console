@@ -123,7 +123,7 @@ export function resolveParams(
 /**
  * 停止指定任务，触发该任务的取消信号：
  * - ctx.sleep 立即 reject
- * - 在飞的 MoegirlApi 请求立即中断（通过 abortSignalStorage 注入）
+ * - 进行中的 MoegirlApi 请求立即中断（通过 abortSignalStorage 注入）
  * - 下一次 API 请求在发起前检测到中止并抛出 AbortError
  */
 export function stopTask(taskKey: string): void {

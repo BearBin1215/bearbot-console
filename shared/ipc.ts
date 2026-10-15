@@ -1,5 +1,5 @@
 /**
- * 主进程、Preload 与渲染进程共用的 IPC 契约
+ * 主进程、Preload 与渲染进程共用的 IPC 类型定义
  *
  * 新增或修改 IPC 通道时统一在此维护参数、返回值和事件载荷，避免三端分别声明后发生漂移。
  */
@@ -25,12 +25,12 @@ export interface RendererErrorPayload {
   detail?: string;
 }
 
-/** 通道契约占位工具：仅在类型层面记录参数与返回值类型，运行时返回值无意义 */
+/** 通道类型占位工具：仅在类型层面记录参数与返回值类型，运行时返回值无意义 */
 function contract<A extends readonly unknown[], R>(): { args: A; result: R } {
   return undefined as never;
 }
 
-/** 渲染进程调用主进程的通道契约（值仅供类型推导，通道名与 Preload 白名单共用此单一来源） */
+/** 渲染进程调用主进程的通道类型定义（值仅供类型推导，通道名与 Preload 白名单共用此单一来源） */
 export const IPC_INVOKE_MAP = {
   'settings:get': contract<[], SettingsData>(),
   'settings:patch': contract<[Partial<SettingsData>], void>(),
@@ -57,10 +57,10 @@ export const IPC_INVOKE_MAP = {
   'webhook:regenerate-token': contract<[], string>(),
 } satisfies Record<string, { args: readonly unknown[]; result: unknown }>;
 
-/** 渲染进程调用主进程的通道契约类型 */
+/** 渲染进程调用主进程的通道类型 */
 export type IpcInvokeMap = typeof IPC_INVOKE_MAP;
 
-/** 主进程推送到渲染进程的事件契约 */
+/** 主进程推送到渲染进程的事件类型定义 */
 export interface IpcEventMap {
   'task:log': [payload: TaskLogEvent];
   'task:status': [payload: TaskStatusPayload];
@@ -79,7 +79,7 @@ export type IpcInvokeArgs<C extends IpcInvokeChannel> = IpcInvokeMap[C]['args'];
 /** 指定调用通道的返回值 */
 export type IpcInvokeResult<C extends IpcInvokeChannel> = IpcInvokeMap[C]['result'];
 
-/** Preload 允许调用的通道白名单（由通道契约派生，无需单独维护） */
+/** Preload 允许调用的通道白名单（由通道类型定义派生，无需单独维护） */
 export const IPC_INVOKE_CHANNELS = Object.keys(IPC_INVOKE_MAP) as IpcInvokeChannel[];
 
 /** Preload 允许订阅的事件白名单 */
