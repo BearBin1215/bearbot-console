@@ -10,7 +10,19 @@ vi.mock('../../electron/tasks/mess-updater/page-store', () => ({
   upsertPages: vi.fn(),
 }));
 
-import { fetchPagesWithDeniedIsolation, mergePages, reconcileRevids, type ApiResponsePage } from '../../electron/tasks/mess-updater/index';
+// index.ts 读取应用设置以推导单页补偿重试的超时，mock 以避免 electron-store 实例化
+vi.mock('../../electron/services/store', () => ({
+  getAllSettings: vi.fn(() => ({ requestTimeout: 30000 })),
+}));
+
+import {
+  BatchFetcher,
+  BatchPlanner,
+  mergePages,
+  reconcileRevids,
+  type ApiResponsePage,
+  type BatchFetcherOptions,
+} from '../../electron/tasks/mess-updater/index';
 import { MessOutput, type PageData } from '../../electron/tasks/mess-updater/output';
 import { checkOrder, createMainChecks, regexPosition } from '../../electron/tasks/mess-updater/checks';
 import type { PageRecord } from '../../electron/tasks/mess-updater/page-store';
@@ -136,7 +148,7 @@ describe('mergePages', () => {
 // 测试 reconcileRevids 函数（对比 API 页面清单与本地 DB 的 revid，计算待补拉与待删除）
 describe('reconcileRevids', () => {
   /** 构造 API 页面元数据（pageid/ns 与断言无关，固定取 revid 即可） */
-  const meta = (revid: number): PageMeta => ({ pageid: revid, ns: 0, revid });
+  const meta = (revid: number): PageMeta => ({ pageid: revid, ns: 0, revid, length: 1024 });
 
   it('API 有、DB 无 -> 待补拉', () => {
     const api = new Map([['新页面', meta(100)]]);
@@ -190,15 +202,86 @@ describe('reconcileRevids', () => {
 // #endregion
 
 
-// 测试 fetchPagesWithDeniedIsolation（受限页面导致整批请求被拒时定位并跳过该标题）
-describe('fetchPagesWithDeniedIsolation', () => {
+// 测试 BatchPlanner（按字节预算切批，预算随失败收缩、随成功回升）
+describe('BatchPlanner', () => {
+  it('按字节预算切批，装不下时开新批', () => {
+    const planner = new BatchPlanner();
+    /** 每个标题占四分之一预算 */
+    const size = planner.budget / 4;
+    const titles = ['页面1', '页面2', '页面3', '页面4', '页面5'];
+
+    const batches = [...planner.pack(titles, () => size)];
+
+    expect(batches).toEqual([['页面1', '页面2', '页面3', '页面4'], ['页面5']]);
+  });
+
+  it('单页超过预算 -> 独占一批', () => {
+    const planner = new BatchPlanner();
+    const sizes = new Map([['超长页面', planner.budget * 2], ['页面A', 1024], ['页面B', 1024]]);
+
+    const batches = [...planner.pack(sizes.keys(), (title) => sizes.get(title) ?? 0)];
+
+    expect(batches).toEqual([['超长页面'], ['页面A', '页面B']]);
+  });
+
+  it('失败后预算减半，连续成功后回升', () => {
+    const planner = new BatchPlanner();
+    const initial = planner.budget;
+
+    planner.onOversize();
+    expect(planner.budget).toBe(initial / 2);
+
+    for (let i = 0; i < 20; i++) {
+      planner.onSuccess();
+    }
+    expect(planner.budget).toBe(initial * 0.75);
+  });
+
+  it('预算收缩到下限后不再下降', () => {
+    const planner = new BatchPlanner();
+    for (let i = 0; i < 10; i++) {
+      planner.onOversize();
+    }
+    const floor = planner.budget;
+    planner.onOversize();
+    expect(planner.budget).toBe(floor);
+  });
+});
+
+
+// 测试 BatchFetcher（失败时按原因拆批、放大超时、退避与熔断）
+describe('BatchFetcher', () => {
+  /** 单批请求固定返回的 revid */
+  const REVID = 100;
+
   /** 构造访问拒绝错误，字段与 MoegirlRequestError 的 apiCode 一致 */
   function accessDenied(info: string): Error {
     return Object.assign(new Error(info), { apiCode: 'accessdenied' });
   }
 
-  /** 单批请求固定返回的 revid */
-  const REVID = 100;
+  /** 构造超时错误，字段与 MoegirlRequestError 的 timedOut 一致 */
+  function timeout(): Error {
+    return Object.assign(new Error('POST 请求失败，请求超时（30s）'), { timedOut: true });
+  }
+
+  /** 构造限流错误，字段与 MoegirlRequestError 的 detail 一致 */
+  function throttled(): Error {
+    return Object.assign(new Error('HTTP 429'), { detail: { status: 429, timeout: 30000 } });
+  }
+
+  /** 正常响应 */
+  function okResponse(titles: string[]) {
+    return {
+      query: {
+        pages: titles.map((title, index) => ({
+          title,
+          pageid: index + 1,
+          ns: 0,
+          revisions: [{ revid: REVID, slots: { main: { content: `正文${title}` } } }],
+        })),
+      },
+    };
+  }
 
   /**
    * 构造 MoegirlApi 请求替身
@@ -215,73 +298,218 @@ describe('fetchPagesWithDeniedIsolation', () => {
       if (denied) {
         throw accessDenied(`You are not allowed to view ${keyword ?? denied}.`);
       }
-      return {
-        query: {
-          pages: params.titles.map((title, index) => ({
-            title,
-            pageid: index + 1,
-            ns: 0,
-            revisions: [{ revid: REVID, slots: { main: { content: `正文${title}` } } }],
-          })),
-        },
-      };
+      return okResponse(params.titles);
     });
     return { api: { post } as unknown as MoegirlApi, post };
   }
 
+  /**
+   * 构造补拉器
+   *
+   * @param api 萌百 API 替身
+   * @param overrides 需要覆盖的字段
+   */
+  function createFetcher(api: MoegirlApi, overrides: Partial<BatchFetcherOptions> = {}): BatchFetcher {
+    return new BatchFetcher({
+      api,
+      logger: { log: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      sleep: vi.fn(async () => { }),
+      longPageTimeout: 120_000,
+      byteLength: () => 1024,
+      ...overrides,
+    });
+  }
+
+  // #region 受限页面
+
   it('无受限标题 -> 一次请求写入全部页面', async () => {
     const { api, post } = createApi([]);
-    const pageMap = new Map<string, PageRecord>();
-    const deniedTitles = new Set<string>();
+    const fetcher = createFetcher(api);
+    const sink = new Map<string, PageRecord>();
 
-    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B'], pageMap, deniedTitles);
+    await fetcher.fetch(['页面A', '页面B'], sink);
 
-    expect([...pageMap.keys()]).toEqual(['页面A', '页面B']);
-    expect(deniedTitles.size).toBe(0);
+    expect([...sink.keys()]).toEqual(['页面A', '页面B']);
+    expect(fetcher.deniedTitles.size).toBe(0);
     expect(post).toHaveBeenCalledTimes(1);
   });
 
   it('错误信息内嵌标题 -> 单独验证后只补拉其余标题', async () => {
     const { api, post } = createApi(['页面B']);
-    const pageMap = new Map<string, PageRecord>();
-    const deniedTitles = new Set<string>();
+    const fetcher = createFetcher(api);
+    const sink = new Map<string, PageRecord>();
 
-    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B', '页面C'], pageMap, deniedTitles);
+    await fetcher.fetch(['页面A', '页面B', '页面C'], sink);
 
-    expect([...deniedTitles]).toEqual(['页面B']);
-    expect([...pageMap.keys()]).toEqual(['页面A', '页面C']);
+    expect([...fetcher.deniedTitles]).toEqual(['页面B']);
+    expect([...sink.keys()]).toEqual(['页面A', '页面C']);
     // 整批失败 -> 单独验证页面B失败 -> 其余标题一次拉完
     expect(post).toHaveBeenCalledTimes(3);
   });
 
   it('错误信息无法定位标题 -> 二分缩小到单个标题', async () => {
     const { api } = createApi(['页面B'], 'denied');
-    const pageMap = new Map<string, PageRecord>();
-    const deniedTitles = new Set<string>();
+    const fetcher = createFetcher(api);
+    const sink = new Map<string, PageRecord>();
 
-    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B'], pageMap, deniedTitles);
+    await fetcher.fetch(['页面A', '页面B'], sink);
 
-    expect([...deniedTitles]).toEqual(['页面B']);
-    expect([...pageMap.keys()]).toEqual(['页面A']);
+    expect([...fetcher.deniedTitles]).toEqual(['页面B']);
+    expect([...sink.keys()]).toEqual(['页面A']);
   });
 
   it('一批含多个受限标题 -> 全部定位并跳过', async () => {
     const { api } = createApi(['页面A', '页面D'], 'denied');
-    const pageMap = new Map<string, PageRecord>();
-    const deniedTitles = new Set<string>();
+    const fetcher = createFetcher(api);
+    const sink = new Map<string, PageRecord>();
 
-    await fetchPagesWithDeniedIsolation(api, ['页面A', '页面B', '页面C', '页面D'], pageMap, deniedTitles);
+    await fetcher.fetch(['页面A', '页面B', '页面C', '页面D'], sink);
 
-    expect([...deniedTitles].sort()).toEqual(['页面A', '页面D']);
-    expect([...pageMap.keys()]).toEqual(['页面B', '页面C']);
+    expect([...fetcher.deniedTitles].sort()).toEqual(['页面A', '页面D']);
+    expect([...sink.keys()]).toEqual(['页面B', '页面C']);
   });
 
-  it('非访问拒绝错误 -> 原样抛出', async () => {
-    const api = { post: vi.fn(async () => { throw new Error('网络错误'); }) } as unknown as MoegirlApi;
+  it('连续大量页面被拒 -> 判定为无权读取并中止', async () => {
+    const titles = Array.from({ length: 24 }, (_, index) => `页面${index}`);
+    const { api } = createApi(titles, 'denied');
+    const fetcher = createFetcher(api);
 
-    await expect(fetchPagesWithDeniedIsolation(api, ['页面A'], new Map(), new Set()))
-      .rejects.toThrow('网络错误');
+    await expect(fetcher.fetch(titles, new Map()))
+      .rejects.toThrow(/无权读取页面源代码/);
   });
+
+  it('已成功拉取过页面 -> 连续被拒只按页跳过，不中止', async () => {
+    const titles = Array.from({ length: 24 }, (_, index) => `页面${index}`);
+    const { api } = createApi(titles, 'denied');
+    const fetcher = createFetcher(api);
+
+    await fetcher.fetch(['正常页面'], new Map());
+    await fetcher.fetch(titles, new Map());
+
+    expect(fetcher.deniedTitles.size).toBe(24);
+  });
+
+  // #endregion
+
+
+  // #region 网络异常
+
+  it('超时 -> 按体积拆批重试，成功后全部入库且预算下调', async () => {
+    const post = vi.fn(async (params: { titles: string[] }) => {
+      // 超过 2 个标题的请求在当前链路上必然超时
+      if (params.titles.length > 2) {
+        throw timeout();
+      }
+      return okResponse(params.titles);
+    });
+    const fetcher = createFetcher({ post } as unknown as MoegirlApi);
+    const initialBudget = fetcher.planner.budget;
+    const sink = new Map<string, PageRecord>();
+
+    await fetcher.fetch(['p1', 'p2', 'p3', 'p4', 'p5', 'p6'], sink);
+
+    expect([...sink.keys()]).toEqual(['p1', 'p2', 'p3', 'p4', 'p5', 'p6']);
+    expect(fetcher.failedTitles.size).toBe(0);
+    expect(fetcher.planner.budget).toBeLessThan(initialBudget);
+    expect(post.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('单页超时 -> 放大超时时间重试成功后入库', async () => {
+    const post = vi.fn(async (_params: { titles: string[] }, options?: { timeout?: number }) => {
+      if (options?.timeout !== 120_000) {
+        throw timeout();
+      }
+      return okResponse(['超长页面']);
+    });
+    const fetcher = createFetcher({ post } as unknown as MoegirlApi);
+    const sink = new Map<string, PageRecord>();
+
+    await fetcher.fetch(['超长页面'], sink);
+
+    expect([...sink.keys()]).toEqual(['超长页面']);
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls[1][1]?.timeout).toBe(120_000);
+  });
+
+  it('单页重试仍失败 -> 记入失败集合且不入库', async () => {
+    const api = { post: vi.fn(async () => { throw timeout(); }) } as unknown as MoegirlApi;
+    const fetcher = createFetcher(api);
+    const sink = new Map<string, PageRecord>();
+
+    await fetcher.fetch(['坏页面'], sink);
+
+    expect(sink.size).toBe(0);
+    expect([...fetcher.failedTitles]).toEqual(['坏页面']);
+  });
+
+  it('限流 -> 退避后按原批量重试', async () => {
+    let calls = 0;
+    const post = vi.fn(async (params: { titles: string[] }) => {
+      if (calls++ === 0) {
+        throw throttled();
+      }
+      return okResponse(params.titles);
+    });
+    const sleep = vi.fn(async () => { });
+    const fetcher = createFetcher({ post } as unknown as MoegirlApi, { sleep });
+    const sink = new Map<string, PageRecord>();
+
+    await fetcher.fetch(['页面A'], sink);
+
+    expect(sleep).toHaveBeenCalledWith(5000);
+    expect([...sink.keys()]).toEqual(['页面A']);
+  });
+
+  it('带 API 错误码的确定性错误 -> 直接抛出', async () => {
+    const api = {
+      post: vi.fn(async () => {
+        throw Object.assign(new Error('{badvalue} 参数非法'), { apiCode: 'badvalue' });
+      }),
+    } as unknown as MoegirlApi;
+
+    await expect(createFetcher(api).fetch(['页面A'], new Map()))
+      .rejects.toThrow('参数非法');
+  });
+
+  it('连续请求失败达到上限 -> 熔断中止', async () => {
+    const api = { post: vi.fn(async () => { throw timeout(); }) } as unknown as MoegirlApi;
+    const fetcher = createFetcher(api);
+    const titles = Array.from({ length: 8 }, (_, index) => `页面${index}`);
+
+    await expect(fetcher.fetch(titles, new Map()))
+      .rejects.toThrow(/网络可能不可用/);
+  });
+
+  it('续传响应已合并但整批失败 -> 不把不完整的页面写入结果集', async () => {
+    let calls = 0;
+    const post = vi.fn(async () => {
+      calls++;
+      // 首次响应给出正文，分类在续传响应里；续传（以及后续补偿）全部超时
+      if (calls === 1) {
+        return {
+          query: {
+            pages: [{
+              title: '页面A',
+              pageid: 1,
+              ns: 0,
+              revisions: [{ revid: REVID, slots: { main: { content: '正文' } } }],
+            }],
+          },
+          continue: { clcontinue: 'next' },
+        };
+      }
+      throw timeout();
+    });
+    const fetcher = createFetcher({ post } as unknown as MoegirlApi);
+    const sink = new Map<string, PageRecord>();
+
+    await fetcher.fetch(['页面A'], sink);
+
+    expect(sink.size).toBe(0);
+    expect([...fetcher.failedTitles]).toEqual(['页面A']);
+  });
+
+  // #endregion
 });
 
 

@@ -34,7 +34,7 @@ import type {
 /** token 类型 */
 type TokenType = 'createaccount' | 'csrf' | 'login' | 'patrol' | 'rollback' | 'userrights' | 'watch';
 
-interface RequestOptions {
+export interface RequestOptions {
   /** 重试次数（默认使用应用设置中的值） */
   retries?: number;
   /** 请求超时时间（毫秒，默认 30000） */
@@ -160,10 +160,25 @@ export interface RequestErrorDetail {
   timeout: number;
 }
 
+/**
+ * 判断原始错误是否为请求超时
+ *
+ * fetch 在请求超时与连接被中断时会抛出同一形态的错误（AbortError 或含 aborted），
+ * 两种情况下请求都没有拿到结果，调用方的处理方式一致，故合并判断。
+ *
+ * @param error fetch 抛出的原始错误
+ */
+function isTimeoutError(error: Error): boolean {
+  return error.name === 'AbortError' || /abort|timed?\s?out/i.test(error.message);
+}
+
 /** 结构化的萌娘百科 API 请求错误 */
 export class MoegirlRequestError extends Error {
   /** 请求/响应详情 */
   readonly detail: RequestErrorDetail;
+
+  /** 是否为请求超时，供调用方决定是缩小请求量还是直接放弃 */
+  readonly timedOut: boolean;
 
   /**
    * @param error 原始错误
@@ -172,15 +187,16 @@ export class MoegirlRequestError extends Error {
    * @param detail 请求体与响应体等详情，供调用方按需记录
    */
   constructor(error: Error, action: string, attempt: number, detail: RequestErrorDetail) {
-    const isTimeout = error.name === 'AbortError' || /aborted/i.test(error.message);
+    const timedOut = isTimeoutError(error);
     const parts = [`${detail.method} 请求失败`, `action=${action}`];
-    parts.push(isTimeout ? `请求超时（${detail.timeout / 1000}s）` : error.message);
+    parts.push(timedOut ? `请求超时（${detail.timeout / 1000}s）` : error.message);
     if (attempt > 0) {
       parts.push(`已重试${attempt}次`);
     }
     super(parts.join('，'), { cause: error });
     this.name = 'MoegirlRequestError';
     this.detail = detail;
+    this.timedOut = timedOut;
   }
 
   /** 响应体中的 API 错误码（如 accessdenied），非 API 错误时为 undefined */
@@ -209,14 +225,16 @@ export class MoegirlApi {
   constructor(
     /** 该账号专属的 Electron session（分区），承载 cookie jar */
     readonly session: Session,
-    /** 固定域名（可选，未传则在请求时读取应用设置） */
+    /** 固定域名（可选，未传则在请求时读取应用设置）；传入含协议的地址可指向本地测试站点 */
     private readonly hostOverride?: string,
   ) { }
 
   /** 请求地址：传入 hostOverride 时固定域名，否则从应用设置动态获取 */
   private get url() {
     const host = this.hostOverride ?? getAllSettings().moegirlDomain;
-    return `https://${host}/api.php`;
+    // 生产环境的域名不带协议，本地测试站点需要指定 http(s) 协议
+    const origin = host.includes('://') ? host : `https://${host}`;
+    return `${origin}/api.php`;
   }
 
   /** 发起 GET 请求 */
@@ -280,7 +298,8 @@ export class MoegirlApi {
         ...(cmcontinue ? { cmcontinue } : {}),
       } satisfies QueryRequest<never, 'categorymembers'>);
       cmcontinue = response.continue?.cmcontinue || false;
-      members.push(...(response.query.categorymembers ?? []) as unknown as T[]);
+      // 分类为空或不存在时接口不返回 query 字段
+      members.push(...(response.query?.categorymembers ?? []) as unknown as T[]);
     } while (cmcontinue);
     return members;
   }
@@ -302,7 +321,8 @@ export class MoegirlApi {
         ...extraParams,
       } satisfies QueryRequest<never, 'allpages'>);
       apcontinue = allPages.continue?.apcontinue || false;
-      for (const page of allPages.query.allpages ?? []) {
+      // 命名空间为空时接口不返回 query 字段
+      for (const page of allPages.query?.allpages ?? []) {
         pageList.add(page.title);
       }
     } while (apcontinue);

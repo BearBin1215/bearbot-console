@@ -1,11 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { Session } from 'electron';
 
 // moegirl.ts 顶部 import getAllSettings，触发 electron-store 实例化；mock 以避免磁盘副作用
 vi.mock('../../electron/services/store', () => ({
-  getAllSettings: vi.fn(),
+  getAllSettings: vi.fn(() => ({
+    retryCount: 0,
+    retryInterval: 0,
+    requestTimeout: 30000,
+    minRequestInterval: 0,
+    userAgent: 'test',
+    moegirlDomain: 'mzh.moegirl.org.cn',
+  })),
 }));
 
-import { MoegirlRequestError, type RequestErrorDetail } from '../../electron/services/moegirl';
+import { MoegirlApi, MoegirlRequestError, type RequestErrorDetail } from '../../electron/services/moegirl';
 
 // 测试 MoegirlRequestError 构造函数（结构化请求错误的消息拼接、超时识别、详情携带）
 describe('MoegirlRequestError', () => {
@@ -85,6 +93,13 @@ describe('MoegirlRequestError', () => {
     expect(err.name).toBe('MoegirlRequestError');
   });
 
+  it('timedOut 标记超时错误，供调用方决定缩小请求量', () => {
+    const timeoutError = new MoegirlRequestError(new DOMException('Aborted', 'AbortError'), 'query', 0, baseDetail);
+    const otherError = new MoegirlRequestError(new Error('Network Error'), 'query', 0, baseDetail);
+    expect(timeoutError.timedOut).toBe(true);
+    expect(otherError.timedOut).toBe(false);
+  });
+
   it('cause 传递原始错误对象', () => {
     const cause = new Error('origin');
     const err = new MoegirlRequestError(cause, 'edit', 0, baseDetail);
@@ -116,4 +131,30 @@ describe('MoegirlRequestError', () => {
   });
 
   // #endregion
+});
+
+
+// 测试列表查询在空结果下的容错（MediaWiki 在没有任何结果时不返回 query 字段）
+describe('MoegirlApi 空结果容错', () => {
+  /**
+   * 构造返回固定响应的 API 实例
+   *
+   * @param body 响应体
+   */
+  function createApi(body: unknown): MoegirlApi {
+    const session = {
+      fetch: async () => new Response(JSON.stringify(body), { status: 200 }),
+    } as unknown as Session;
+    return new MoegirlApi(session, 'mzh.moegirl.org.cn');
+  }
+
+  it('分类为空 -> fetchCategoryMembers 返回空数组', async () => {
+    const api = createApi({ batchcomplete: true });
+    await expect(api.fetchCategoryMembers('Category:不存在的分类')).resolves.toEqual([]);
+  });
+
+  it('命名空间为空 -> fetchAllPages 返回空集合', async () => {
+    const api = createApi({ batchcomplete: true });
+    await expect(api.fetchAllPages()).resolves.toEqual(new Set());
+  });
 });
