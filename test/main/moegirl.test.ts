@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Session } from 'electron';
 
 // moegirl.ts 顶部 import getAllSettings，触发 electron-store 实例化；mock 以避免磁盘副作用
@@ -14,6 +14,8 @@ vi.mock('../../electron/services/store', () => ({
 }));
 
 import { MoegirlApi, MoegirlRequestError, type RequestErrorDetail } from '../../electron/services/moegirl';
+import { getAllSettings } from '../../electron/services/store';
+import { createDefaultSettings } from '../../shared/settings';
 
 // 测试 MoegirlRequestError 构造函数（结构化请求错误的消息拼接、超时识别、详情携带）
 describe('MoegirlRequestError', () => {
@@ -158,3 +160,88 @@ describe('MoegirlApi 空结果容错', () => {
     await expect(api.fetchAllPages()).resolves.toEqual(new Set());
   });
 });
+
+
+// #region token 失效处理
+
+/** 构造仅实现 fetch 的 session 桩，按调用顺序消费预设响应并记录请求参数 */
+function createSession(responses: Array<() => unknown>) {
+  /** 每次请求的地址与初始化参数 */
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetch = vi.fn(async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    const responder = responses.shift();
+    if (!responder) {
+      throw new Error('测试未预设对应的请求响应');
+    }
+    const body = JSON.stringify(responder());
+    return { ok: true, status: 200, text: async () => body };
+  });
+  return { fetch, calls };
+}
+
+/** 读取请求体中指定参数的值（仅用于 POST 的 URLSearchParams body） */
+function getBodyParam(init: RequestInit, key: string): string | null {
+  return new URLSearchParams(init.body as string).get(key);
+}
+
+describe('MoegirlApi token 失效处理', () => {
+  beforeEach(() => {
+    vi.mocked(getAllSettings).mockReturnValue({
+      ...createDefaultSettings('test'),
+      retryCount: 2,
+      retryInterval: 0,
+      minRequestInterval: 0,
+    });
+  });
+
+  it('badtoken → 刷新 token 后用新 token 重试', async () => {
+    const { fetch, calls } = createSession([
+      () => ({ query: { tokens: { csrftoken: 'stale' } } }),
+      () => ({ error: { code: 'badtoken', info: 'Invalid CSRF token.' } }),
+      () => ({ query: { tokens: { csrftoken: 'fresh' } } }),
+      () => ({ edit: { result: 'Success' } }),
+    ]);
+    const api = new MoegirlApi({ fetch } as unknown as ConstructorParameters<typeof MoegirlApi>[0]);
+
+    await expect(api.postWithToken('csrf', { action: 'edit', title: 'X', text: 'Y' }))
+      .resolves.toEqual({ edit: { result: 'Success' } });
+
+    // 取 token → 失败 → 刷新 token → 重试成功；badtoken 不进入请求级重试
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(getBodyParam(calls[1].init, 'token')).toBe('stale');
+    expect(getBodyParam(calls[3].init, 'token')).toBe('fresh');
+  });
+
+  it('刷新后仍 badtoken → 直接抛出，不无限刷新', async () => {
+    const { fetch } = createSession([
+      () => ({ query: { tokens: { csrftoken: 'stale' } } }),
+      () => ({ error: { code: 'badtoken', info: 'Invalid CSRF token.' } }),
+      () => ({ query: { tokens: { csrftoken: 'fresh' } } }),
+      () => ({ error: { code: 'badtoken', info: 'Invalid CSRF token.' } }),
+    ]);
+    const api = new MoegirlApi({ fetch } as unknown as ConstructorParameters<typeof MoegirlApi>[0]);
+
+    const error = await api.postWithToken('csrf', { action: 'edit' }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(MoegirlRequestError);
+    expect((error as MoegirlRequestError).apiCode).toBe('badtoken');
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('不可重试错误码按 apiCode 判断，不依赖 info 文案', async () => {
+    const { fetch } = createSession([
+      () => ({ error: { code: 'permissiondenied', info: 'You do not have permission to do that.' } }),
+    ]);
+    const api = new MoegirlApi({ fetch } as unknown as ConstructorParameters<typeof MoegirlApi>[0]);
+
+    const error = await api.post({ action: 'query' }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(MoegirlRequestError);
+    expect((error as MoegirlRequestError).apiCode).toBe('permissiondenied');
+    // retryCount 为 2，但该错误码不可重试，只应发出一次请求
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #endregion

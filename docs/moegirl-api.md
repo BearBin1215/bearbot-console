@@ -25,7 +25,7 @@
 | `api.get(params)` | GET 请求 |
 | `api.post(params)` | POST 请求（任务中最常用） |
 | `api.postWithToken(tokenType, params)` | 先取 token 再 POST；自动处理 `badtoken` 刷新。编辑等写操作必须用此方法 |
-| `api.getToken(tokenType)` / `refreshToken(...)` | 取/刷新 token（带缓存） |
+| `api.getToken(tokenType)` | 取 token（带缓存）；失效时由 `postWithToken` 自动刷新 |
 | `api.fetchCategoryMembers(category, extraParams?)` | 获取分类的全部成员，自动处理 `cmcontinue` 分页 |
 
 ### 2.2 请求机制（`request`，`moegirl.ts:142`）
@@ -36,8 +36,8 @@
   - 值为 `false` 的参数**不会发送**（用于条件性传参，如 `gcmcontinue: false` 表示不传该参数）。
 - **HTTP**：POST 时参数放进 `URLSearchParams` body；携带 `User-Agent`（来自设置）与 `credentials: 'include'`（复用账号 session 的 cookie）。
 - **超时**：30 秒（`AbortController`）。
-- **重试**：按设置 `retryCount`（默认 1）/`retryInterval`（默认 3000ms）重试；`badtoken`、`permissiondenied`、`accessdenied`、`invalidtitle` 等不可重试错误码立即抛出（`NON_RETRYABLE_ERRORS`）。
-- **错误解析**：即使 HTTP 200，若响应体含 `error` 字段也会抛出 `Error(error.info || error.code)`；最终包装为 `MoegirlRequestError`，同时保留错误码（`error.apiCode`）与请求/响应详情（`error.detail`）。任务可据此按错误码分支处理，如 `accessdenied` 表示当前账号无权读取该内容。
+- **重试**：按设置 `retryCount`（默认 1）/`retryInterval`（默认 3000ms）重试；`badtoken`、`permissiondenied`、`accessdenied`、`invalidtitle` 等不可重试错误码立即抛出（`NON_RETRYABLE_ERRORS`，按响应中的 `error.code` 精确匹配，而非 `error.info` 文案）。
+- **错误解析**：即使 HTTP 200，若响应体含 `error` 字段也会抛出 `Error(error.info || error.code)`；最终包装为 `MoegirlRequestError`，同时保留错误码（`error.apiCode`，取自响应的 `error.code`）与请求/响应详情（`error.detail`）。任务可据此按错误码分支处理，如 `accessdenied` 表示当前账号无权读取该内容。
 
 ### 2.3 请求参数类型
 

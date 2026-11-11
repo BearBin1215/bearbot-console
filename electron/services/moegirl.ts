@@ -199,7 +199,7 @@ export class MoegirlRequestError extends Error {
     this.timedOut = timedOut;
   }
 
-  /** 响应体中的 API 错误码（如 accessdenied），非 API 错误时为 undefined */
+  /** 响应体中的 API 错误码（如 accessdenied、badtoken），非 API 错误时为 undefined */
   get apiCode(): string | undefined {
     return this.detail.apiCode;
   }
@@ -363,9 +363,8 @@ export class MoegirlApi {
     try {
       return await this.post<T>({ ...params, token }, options);
     } catch (error) {
-      const msg = (error as Error).message ?? '';
-      // 自动处理 badtoken 刷新
-      if (msg.includes('badtoken')) {
+      // 自动处理 badtoken 刷新：按错误码判断，错误信息是 "Invalid CSRF token." 之类的描述，不含错误码
+      if (error instanceof MoegirlRequestError && error.apiCode === 'badtoken') {
         this.tokens.delete(tokenType);
         token = await this.getToken(tokenType);
         return this.post<T>({ ...params, token }, options);
@@ -414,10 +413,16 @@ export class MoegirlApi {
     this.tokens.clear();
   }
 
-  /** 判断错误是否可重试 */
-  private isRetryable(error: Error): boolean {
-    const msg = error.message ?? '';
-    return !NON_RETRYABLE_ERRORS.some((code) => msg.includes(code));
+  /**
+   * 判断错误是否可重试
+   *
+   * 仅按 MediaWiki 错误码判断；错误信息是给人看的描述（如 "Invalid CSRF token."），不含错误码。
+   * 网络错误与超时没有错误码，默认可重试。
+   *
+   * @param apiCode 本次失败响应的 API 错误码，非 API 错误时为 undefined
+   */
+  private isRetryable(apiCode: string | undefined): boolean {
+    return apiCode === undefined || !NON_RETRYABLE_ERRORS.includes(apiCode);
   }
 
   /**
@@ -528,7 +533,7 @@ export class MoegirlApi {
           break;
         }
         // 不可重试的错误直接抛出
-        if (attempt < retries && this.isRetryable(lastError)) {
+        if (attempt < retries && this.isRetryable(lastApiCode)) {
           await new Promise<void>((resolve) => {
             const waitTimer = setTimeout(resolve, retryInterval);
             taskSignal?.addEventListener(
