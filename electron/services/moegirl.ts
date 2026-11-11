@@ -156,10 +156,29 @@ export interface RequestErrorDetail {
   timeout: number;
 }
 
+/**
+ * API 返回的结构化错误
+ *
+ * MediaWiki 的 `error.info` 是给人看的自然语言描述（如 "Invalid CSRF token."），
+ * 不含错误码；重试判断与 token 刷新必须依据 `error.code`（如 "badtoken"）精确匹配。
+ */
+class MoegirlApiError extends Error {
+  /**
+   * @param code MediaWiki 错误码
+   * @param message 错误信息（`error.info`，缺失时回退为错误码）
+   */
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'MoegirlApiError';
+  }
+}
+
 /** 结构化的萌娘百科 API 请求错误 */
 export class MoegirlRequestError extends Error {
   /** 请求/响应详情 */
   readonly detail: RequestErrorDetail;
+  /** MediaWiki 错误码（如 badtoken）；非 API 错误（网络、超时、解析失败等）时为 undefined */
+  readonly code?: string;
 
   /**
    * @param error 原始错误
@@ -177,6 +196,7 @@ export class MoegirlRequestError extends Error {
     super(parts.join('，'), { cause: error });
     this.name = 'MoegirlRequestError';
     this.detail = detail;
+    this.code = error instanceof MoegirlApiError ? error.code : undefined;
   }
 }
 
@@ -334,9 +354,8 @@ export class MoegirlApi {
     try {
       return await this.post<T>({ ...params, token }, options);
     } catch (error) {
-      const msg = (error as Error).message ?? '';
-      // 自动处理 badtoken 刷新
-      if (msg.includes('badtoken')) {
+      // 自动处理 badtoken 刷新：按错误码判断，错误信息是 "Invalid CSRF token." 之类的描述，不含错误码
+      if (error instanceof MoegirlRequestError && error.code === 'badtoken') {
         this.tokens.delete(tokenType);
         token = await this.getToken(tokenType);
         return this.post<T>({ ...params, token }, options);
@@ -385,10 +404,9 @@ export class MoegirlApi {
     this.tokens.clear();
   }
 
-  /** 判断错误是否可重试 */
+  /** 判断错误是否可重试（仅按 MediaWiki 错误码判断，网络错误与超时默认可重试） */
   private isRetryable(error: Error): boolean {
-    const msg = error.message ?? '';
-    return !NON_RETRYABLE_ERRORS.some((code) => msg.includes(code));
+    return !(error instanceof MoegirlApiError && NON_RETRYABLE_ERRORS.includes(error.code));
   }
 
   /**
@@ -485,7 +503,8 @@ export class MoegirlApi {
         if (data?.error) {
           lastStatus = res.status;
           lastResponseBody = body;
-          throw new Error(data.error.info || data.error.code);
+          const code = typeof data.error.code === 'string' ? data.error.code : 'unknown';
+          throw new MoegirlApiError(code, data.error.info || code);
         }
         return data as T;
       } catch (error) {
