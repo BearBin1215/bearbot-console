@@ -28,6 +28,7 @@ import type {
 import type {
   ApiEditResponse,
   ApiQueryResponse,
+  ApiQueryResponseWithResult,
   QueryPage,
 } from 'types-mediawiki-response';
 
@@ -252,7 +253,7 @@ export class MoegirlApi {
    * @param title 页面标题
    */
   async getPageSource(title: string): Promise<string> {
-    const res = await this.post<ApiQueryResponse>({
+    const res = await this.post<ApiQueryResponseWithResult>({
       action: 'query',
       prop: 'revisions',
       titles: title,
@@ -298,7 +299,6 @@ export class MoegirlApi {
         ...(cmcontinue ? { cmcontinue } : {}),
       } satisfies QueryRequest<never, 'categorymembers'>);
       cmcontinue = response.continue?.cmcontinue || false;
-      // 分类为空或不存在时接口不返回 query 字段
       members.push(...(response.query?.categorymembers ?? []) as unknown as T[]);
     } while (cmcontinue);
     return members;
@@ -321,7 +321,6 @@ export class MoegirlApi {
         ...extraParams,
       } satisfies QueryRequest<never, 'allpages'>);
       apcontinue = allPages.continue?.apcontinue || false;
-      // 命名空间为空时接口不返回 query 字段
       for (const page of allPages.query?.allpages ?? []) {
         pageList.add(page.title);
       }
@@ -336,7 +335,7 @@ export class MoegirlApi {
       return cached;
     }
     try {
-      const data = await this.get<ApiQueryResponse>({
+      const data = await this.get<ApiQueryResponseWithResult>({
         action: 'query',
         meta: 'tokens',
         type: tokenType,
