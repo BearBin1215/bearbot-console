@@ -46,7 +46,8 @@ function isSingleVsAlbumPair(items: string[]): boolean {
 const requiredDisambig: TaskHandler = async ({ api, logger }) => {
   // 获取所有消歧义页标题及其重定向，去掉 (消歧义页) 后缀以免误判
   const disambigList = new Set<string>();
-  let gcmcontinue: string | false = false;
+  /** 分页游标：整包回传响应 continue（同时含 gcmcontinue 与 rdcontinue 时不会漏取剩余重定向） */
+  let continueParams: Record<string, unknown> = {};
   logger.info('开始获取消歧义页列表……');
   do {
     const catMembers: ApiQueryResponse = await api.post<ApiQueryResponse>({
@@ -56,10 +57,9 @@ const requiredDisambig: TaskHandler = async ({ api, logger }) => {
       gcmlimit: 'max',
       rdlimit: 'max',
       gcmtitle: 'Category:消歧义页',
-      ...(gcmcontinue ? { gcmcontinue } : {}),
+      ...continueParams,
     } satisfies QueryRequest<'redirects', 'categorymembers', never, 'categorymembers'>);
-    gcmcontinue = catMembers.continue?.gcmcontinue || false;
-    for (const item of (catMembers.query.pages ?? []) as QueryPageExisting<'redirects'>[]) {
+    for (const item of (catMembers.query?.pages ?? []) as QueryPageExisting<'redirects'>[]) {
       disambigList.add(item.title.replace('(消歧义页)', ''));
       for (const rd of item.redirects ?? []) {
         if (rd.title) {
@@ -67,7 +67,8 @@ const requiredDisambig: TaskHandler = async ({ api, logger }) => {
         }
       }
     }
-  } while (gcmcontinue);
+    continueParams = catMembers.continue ?? {};
+  } while (Object.keys(continueParams).length > 0);
   logger.info(`获取到${disambigList.size}个消歧义页及其重定向。开始获取条目列表。`);
 
   // 获取所有条目标题（排除重定向）

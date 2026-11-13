@@ -1,6 +1,6 @@
 import { chunk } from 'es-toolkit';
 import type { QueryRequest } from 'types-mediawiki-params';
-import type { ApiQueryResponse, QueryPage } from 'types-mediawiki-response';
+import type { ApiQueryResponseWithResult, QueryPage } from 'types-mediawiki-response';
 import type { TaskHandler } from '../services/tasks/types';
 
 /** 统计目标页面 */
@@ -87,7 +87,7 @@ const vnCvUpdateTime: TaskHandler = async ({ api, logger, user }) => {
   const batchSize = (await user.getRights()).includes('apihighlimits') ? 500 : 50;
   const lastUpdateData: CvLastUpdate[] = [];
   for (const titleChunk of chunk(cvList, batchSize)) {
-    const response: ApiQueryResponse = await api.post<ApiQueryResponse>({
+    const response = await api.post<ApiQueryResponseWithResult>({
       action: 'query',
       prop: 'revisions',
       titles: titleChunk,

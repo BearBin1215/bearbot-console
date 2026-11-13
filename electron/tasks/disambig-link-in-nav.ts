@@ -20,7 +20,8 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
   /** 获取所有消歧义页标题及其重定向 */
   const getAllDisambigs = async () => {
     const disambigs = new Set<string>();
-    let gcmcontinue: string | false = false;
+    /** 分页游标：整包回传响应 continue（同时含 gcmcontinue 与 rdcontinue 时不会漏取剩余重定向） */
+    let continueParams: Record<string, unknown> = {};
     logger.info('开始获取消歧义页列表……');
     do {
       const catMembers: ApiQueryResponse = await api.post<ApiQueryResponse>({
@@ -30,10 +31,9 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
         gcmlimit: 'max',
         rdlimit: 'max',
         gcmtitle: 'Category:消歧义页',
-        ...(gcmcontinue ? { gcmcontinue } : {}),
+        ...continueParams,
       } satisfies QueryRequest<'redirects', 'categorymembers', never, 'categorymembers'>);
-      gcmcontinue = catMembers.continue?.gcmcontinue || false;
-      for (const item of (catMembers.query.pages ?? []) as PageEntry[]) {
+      for (const item of (catMembers.query?.pages ?? []) as PageEntry[]) {
         disambigs.add(item.title);
         for (const rd of item.redirects ?? []) {
           if (rd.title) {
@@ -41,7 +41,8 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
           }
         }
       }
-    } while (gcmcontinue);
+      continueParams = catMembers.continue ?? {};
+    } while (Object.keys(continueParams).length > 0);
     logger.info(`获取到${disambigs.size}个消歧义页及其重定向`);
     return disambigs;
   };
@@ -97,6 +98,10 @@ const disambigLinkInNav: TaskHandler = async ({ api, logger, sleep, params }) =>
     let continueParams: Record<string, unknown> = {};
     do {
       const response: ApiQueryResponse = await api.post<ApiQueryResponse>({ ...baseParams, ...continueParams });
+      if (!response.query) {
+        logger.log(`分类[[${category}]]没有可检查的模板或子分类，跳过`);
+        break;
+      }
       for (const page of (response.query.pages ?? []) as PageEntry[]) {
         if (page.ns === 14) {
           subcats.push(page.title);

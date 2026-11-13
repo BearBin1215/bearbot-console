@@ -75,7 +75,7 @@ const vnNavboxUpdater: TaskHandler = async ({ api, logger, user }) => {
         ususers: batch,
         usprop: 'groups',
       } satisfies QueryRequest<never, 'users'>);
-      for (const { name, groups } of query.users ?? []) {
+      for (const { name, groups } of query?.users ?? []) {
         if (name && groups) {
           result[name] = groups;
         }

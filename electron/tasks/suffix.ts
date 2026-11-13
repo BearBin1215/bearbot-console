@@ -60,7 +60,7 @@ const suffix: TaskHandler = async ({ api, logger }) => {
       ...(garcontinue ? { garcontinue } : {}),
     } satisfies QueryRequest<never, 'allredirects', never, 'allredirects'>);
     garcontinue = allRedirects.continue?.garcontinue;
-    for (const { from, to } of allRedirects.query.redirects ?? []) {
+    for (const { from, to } of allRedirects.query?.redirects ?? []) {
       if (!from || !to) {
         continue;
       }

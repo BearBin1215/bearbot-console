@@ -95,7 +95,7 @@ async function takeNextBatch(
     aulimit: batchSize,
     ...(progress.userCursor ? { aufrom: progress.userCursor } : {}),
   } satisfies QueryRequest<never, 'allusers'>);
-  progress.batch = (response.query.allusers ?? []).map((item) => item.name);
+  progress.batch = (response.query?.allusers ?? []).map((item) => item.name);
   progress.userCursor = response.continue?.aufrom ?? null;
   progress.enumDone = !response.continue;
   return progress.batch.length > 0;
@@ -169,7 +169,7 @@ export async function scanByUserContribs(
         ucprop: ['timestamp', 'comment'],
         ...(cursor ? { uccontinue: cursor } : {}),
       } satisfies QueryRequest<never, 'usercontribs'>);
-      for (const record of response.query.usercontribs ?? []) {
+      for (const record of response.query?.usercontribs ?? []) {
         scanned += 1;
         if (countIfMassEdit(record, batchUsage, batchMonthly)) {
           matched += 1;
@@ -242,7 +242,7 @@ export async function scanByRecentChanges(
       rclimit: 'max',
       ...(rccontinue ? { rccontinue } : {}),
     } satisfies QueryRequest<never, 'recentchanges'>);
-    for (const record of response.query.recentchanges ?? []) {
+    for (const record of response.query?.recentchanges ?? []) {
       scanned += 1;
       if (countIfMassEdit(record, changes, monthly)) {
         matched += 1;

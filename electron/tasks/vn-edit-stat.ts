@@ -72,7 +72,7 @@ const vnEditStat: TaskHandler = async ({ api, logger, user, sleep, params }) => 
           ucprop: '',
           ...(uccontinue ? { uccontinue } : {}),
         });
-        for (const contrib of response.query.usercontribs ?? []) {
+        for (const contrib of response.query?.usercontribs ?? []) {
           const username = normalizeUsername(contrib.user);
           counts[username] = (counts[username] ?? 0) + 1;
         }

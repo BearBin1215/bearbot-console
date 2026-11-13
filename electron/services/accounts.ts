@@ -164,7 +164,7 @@ async function fetchUserInfo(api: MoegirlApi): Promise<UserInfo> {
     usprop: ['groups', 'rights'],
     ususerids: Number(status.userId),
   } satisfies QueryRequest<never, 'users'>);
-  const user = res.query.users?.[0] as MoegirlUser | undefined;
+  const user = res.query?.users?.[0] as MoegirlUser | undefined;
   return {
     groups: user?.groups || [],
     rights: user?.rights || [],
