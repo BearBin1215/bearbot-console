@@ -28,6 +28,7 @@ import type {
 import type {
   ApiEditResponse,
   ApiQueryResponse,
+  ApiQueryResponseWithResult,
   QueryPage,
 } from 'types-mediawiki-response';
 
@@ -245,7 +246,7 @@ export class MoegirlApi {
    * @param title 页面标题
    */
   async getPageSource(title: string): Promise<string> {
-    const res = await this.post<ApiQueryResponse>({
+    const res = await this.post<ApiQueryResponseWithResult>({
       action: 'query',
       prop: 'revisions',
       titles: title,
@@ -291,7 +292,7 @@ export class MoegirlApi {
         ...(cmcontinue ? { cmcontinue } : {}),
       } satisfies QueryRequest<never, 'categorymembers'>);
       cmcontinue = response.continue?.cmcontinue || false;
-      members.push(...(response.query.categorymembers ?? []) as unknown as T[]);
+      members.push(...(response.query?.categorymembers ?? []) as unknown as T[]);
     } while (cmcontinue);
     return members;
   }
@@ -313,7 +314,7 @@ export class MoegirlApi {
         ...extraParams,
       } satisfies QueryRequest<never, 'allpages'>);
       apcontinue = allPages.continue?.apcontinue || false;
-      for (const page of allPages.query.allpages ?? []) {
+      for (const page of allPages.query?.allpages ?? []) {
         pageList.add(page.title);
       }
     } while (apcontinue);
@@ -327,7 +328,7 @@ export class MoegirlApi {
       return cached;
     }
     try {
-      const data = await this.get<ApiQueryResponse>({
+      const data = await this.get<ApiQueryResponseWithResult>({
         action: 'query',
         meta: 'tokens',
         type: tokenType,
