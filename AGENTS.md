@@ -8,7 +8,7 @@
 
 ## 技术栈
 
-- **运行时**: Electron 44 + Node.js 24
+- **运行时**: Electron 45 + Node.js 24
 - **前端**: React 19 + TypeScript 6
 - **UI 库**: Ant Design 6 + TailwindCSS 4
 - **状态管理**: Zustand

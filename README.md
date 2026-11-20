@@ -7,7 +7,7 @@
 <p align="center">在线演示：<a href="https://bearbin1215.github.io/bearbot-console/">GitHub Page</a></p>
 
 <p align="center">
-  <a href="https://electronjs.org/releases/stable"><img src="https://img.shields.io/github/package-json/dependency-version/BearBin1215/bearbot-console/dev/electron?logo=electron&style=for-the-badge&color=47848f" alt="Electron"></a>
+  <a href="https://releases.electronjs.org/releases/stable"><img src="https://img.shields.io/github/package-json/dependency-version/BearBin1215/bearbot-console/dev/electron?logo=electron&style=for-the-badge&color=47848f" alt="Electron"></a>
   <a href="https://nodejs.org" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/node-%3E%3D24.15-339933?style=for-the-badge&logo=nodedotjs" alt="Node.js" /></a>
 
   <br />
