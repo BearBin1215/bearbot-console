@@ -231,8 +231,8 @@ app.whenReady().then(() => {
     return getMissedTaskRuns();
   });
 
-  // 日志加载：启动时从持久化文件加载最近 50 条（少于 logStore 上限以加快启动，会话内仍可累计至上限）
-  handleIpc('log:load', () => loadRecentLogs(50));
+  // 日志加载：从持久化文件读取最近的日志，窗口重建时也会重新加载
+  handleIpc('log:load', () => loadRecentLogs());
   // 渲染进程错误上报：渲染侧的 ErrorBoundary 与全局 unhandledrejection/error 通过此通道，
   // 复用系统日志链路持久化到文件并推送回日志面板，与主进程 logFatalError 对齐
   handleIpc('log:renderer-error', (_event, payload: RendererErrorPayload) => {
