@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import dayjs from 'dayjs';
+import { MAX_LOG_ENTRIES } from '@shared/log';
 import type { TaskLogEvent } from '@shared/types';
 
 /** 日志保留天数（超过自动删除） */
@@ -76,14 +77,15 @@ export function appendLog(entry: TaskLogEvent): void {
 }
 
 /**
- * 加载最近 count 条日志
- * @param count 最多加载的条数（与渲染进程 logStore 上限对齐）
+ * 加载最近的日志
+ *
+ * 最多返回 {@link MAX_LOG_ENTRIES} 条，避免启动时解析全部历史记录。
  */
-export function loadRecentLogs(count: number): TaskLogEvent[] {
+export function loadRecentLogs(): TaskLogEvent[] {
   const result: TaskLogEvent[] = [];
   const today = new Date();
   // 从当天的日志文件往前遍历（最多 RETENTION_DAYS 天），按时间正序返回。
-  for (let i = 0; i < RETENTION_DAYS && result.length < count; i++) {
+  for (let i = 0; i < RETENTION_DAYS && result.length < MAX_LOG_ENTRIES; i++) {
     const date = new Date(today);
     date.setDate(date.getDate() - i);
     let content: string;
@@ -93,7 +95,7 @@ export function loadRecentLogs(count: number): TaskLogEvent[] {
       continue;
     }
     const lines = content.split('\n').filter(Boolean);
-    for (let j = lines.length - 1; j >= 0 && result.length < count; j--) {
+    for (let j = lines.length - 1; j >= 0 && result.length < MAX_LOG_ENTRIES; j--) {
       try {
         result.push(JSON.parse(lines[j]) as TaskLogEvent);
       } catch {

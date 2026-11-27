@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { MAX_LOG_ENTRIES } from '@shared/log';
 import type { LogLevel, TaskLogEvent } from '@shared/types';
 
 /** 日志条目（内存中展示用，含自增 id） */
@@ -15,9 +16,6 @@ export interface LogEntry {
   detail?: string;
 }
 
-/** 最多保留的日志条目数（会话内累计上限；启动加载量见主进程 log:load，二者不必相等） */
-const MAX_LOGS = 200;
-
 interface LogStore {
   /** 日志列表 */
   logs: LogEntry[];
@@ -25,7 +23,7 @@ interface LogStore {
   loaded: boolean;
   /** 追加一条实时日志，超过上限时丢弃最早的条目 */
   addLog: (event: TaskLogEvent) => void;
-  /** 批量加载持久化日志（启动时调用），替换当前列表 */
+  /** 批量加载持久化日志（启动时调用），替换当前列表并裁剪至上限 */
   loadLogs: (events: TaskLogEvent[]) => void;
   /** 清空所有日志（仅清内存，不影响持久化文件） */
   clearLogs: () => void;
@@ -38,10 +36,12 @@ export const useLogStore = create<LogStore>((set) => ({
   loaded: false,
   addLog: (event) => {
     const entry: LogEntry = { id: nextId++, ...event };
-    set((state) => ({ logs: [...state.logs.slice(-(MAX_LOGS - 1)), entry] }));
+    set((state) => ({ logs: [...state.logs.slice(-(MAX_LOG_ENTRIES - 1)), entry] }));
   },
   loadLogs: (events) => {
-    set({ logs: events.map((e) => ({ id: nextId++, ...e })), loaded: true });
+    // 历史与加载期间收到的实时日志合并后可能超过上限，统一裁剪到最近条目
+    const entries = events.map((e) => ({ id: nextId++, ...e }));
+    set({ logs: entries.slice(-MAX_LOG_ENTRIES), loaded: true });
   },
   clearLogs: () => set({ logs: [] }),
 }));
